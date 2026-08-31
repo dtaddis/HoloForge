@@ -1,6 +1,6 @@
 import numpy as np
 
-from holoforge.layers import make_backplate_depth, make_backplate_requests
+from holoforge.layers import make_backplate_alpha, make_backplate_depth, make_backplate_requests
 
 
 def test_backplate_masks_grow_deeper() -> None:
@@ -18,3 +18,12 @@ def test_inpainted_depth_is_behind_removed_surface() -> None:
     plate = make_backplate_depth(depth, mask, threshold=0.7)
     assert plate.shape == depth.shape
     assert float(plate[mask > 0].max()) <= 0.6751
+
+
+def test_backplate_alpha_excludes_copied_source_pixels() -> None:
+    mask = np.zeros((24, 32), dtype=np.uint8)
+    mask[7:17, 11:21] = 255
+    alpha = make_backplate_alpha(mask)
+    assert np.all(alpha[7:17, 11:21] == 1)
+    assert np.count_nonzero(alpha) == 100
+    assert np.all(alpha[:6] == 0)

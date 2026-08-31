@@ -29,13 +29,21 @@ class LightFieldRenderer:
         *,
         view_cone: float,
         focus: float,
+        head_alpha: np.ndarray | None = None,
+        head_sidewall: float = 0.12,
         device: str | None = None,
     ) -> None:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.height, self.width = depth.shape
         self.view_cone = view_cone
         self.focus = focus
+        self.head_sidewall = max(0.0, head_sidewall)
         self.source = self._make_layer(source, depth, source_alpha)
+        self.head = (
+            self._make_layer(source, depth, head_alpha)
+            if head_alpha is not None and np.any(head_alpha > 0)
+            else None
+        )
         # Far plate first, near plate last.
         self.backplates = [
             self._make_layer(p.image, p.depth, p.alpha) for p in reversed(backplates)
@@ -118,6 +126,44 @@ class LightFieldRenderer:
         alpha = torch.where(cracks, torch.ones_like(alpha), alpha)
         return colour, alpha
 
+    def _add_head_sidewall(
+        self,
+        colour: torch.Tensor,
+        alpha: torch.Tensor,
+        view_position: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Extrude head-edge texture into narrow view-dependent disocclusions."""
+        if self.head is None or abs(view_position) < 1e-6 or self.head_sidewall <= 0:
+            return colour, alpha
+        head_colour, head_alpha = self._splat(self.head, view_position)
+        width = round(
+            abs(view_position) * self.view_cone * self.width * self.head_sidewall
+        )
+        if width <= 0:
+            return colour, alpha
+
+        shift = -1 if view_position > 0 else 1
+        carrier_colour = head_colour
+        carrier_alpha = head_alpha
+        output_colour = colour.clone()
+        output_alpha = alpha.clone()
+        for _ in range(width):
+            candidate_colour = torch.roll(carrier_colour, shifts=shift, dims=1)
+            candidate_alpha = torch.roll(carrier_alpha, shifts=shift, dims=1)
+            if shift < 0:
+                candidate_alpha[:, -1] = 0
+            else:
+                candidate_alpha[:, 0] = 0
+            # A disocclusion is often already occupied by the farther surface,
+            # not represented as an empty pixel. The newly exposed head side is
+            # nearer and must therefore occlude that background strip.
+            fill = (carrier_alpha < 0.5) & (candidate_alpha > 0.5)
+            output_colour = torch.where(fill[..., None], candidate_colour, output_colour)
+            output_alpha = torch.where(fill, torch.ones_like(output_alpha), output_alpha)
+            carrier_colour = torch.where(fill[..., None], candidate_colour, carrier_colour)
+            carrier_alpha = torch.where(fill, torch.ones_like(carrier_alpha), carrier_alpha)
+        return output_colour, output_alpha
+
     @staticmethod
     def _over(
         foreground: torch.Tensor,
@@ -140,6 +186,7 @@ class LightFieldRenderer:
             canvas, canvas_alpha = self._over(colour, alpha, canvas, canvas_alpha)
         colour, alpha = self._splat(self.source, view_position)
         colour, alpha = self._close_single_pixel_cracks(colour, alpha)
+        colour, alpha = self._add_head_sidewall(colour, alpha, view_position)
         canvas, canvas_alpha = self._over(colour, alpha, canvas, canvas_alpha)
 
         array = (canvas.clamp(0, 1).cpu().numpy() * 255).astype(np.uint8)

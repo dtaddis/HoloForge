@@ -37,27 +37,30 @@ class ConversionConfig:
     depth_model: str = "depth-anything/Depth-Anything-V2-Large-hf"
     inpaint_model: str = "diffusers/stable-diffusion-xl-1.0-inpainting-0.1"
     inpaint_mode: str = "generative"
-    inpaint_steps: int = 18
-    inpaint_strength: float = 0.98
-    guidance_scale: float = 6.0
+    inpaint_steps: int = 28
+    inpaint_strength: float = 0.55
+    guidance_scale: float = 7.0
     backplate_count: int = 2
     foreground_fraction: float = 0.34
-    mask_dilation: int = 13
+    mask_dilation: int = 17
     view_cone: float = 0.075
     depth_gamma: float = 1.0
     focus: float = 0.55
-    face_relief: float = 0.07
+    face_relief: float = 0.10
+    head_sidewall: float = 0.12
     edge_refine: float = 0.65
     fill_mode: str = "ambient"
     seed: int = 12345
     prompt: str = (
-        "faithfully continue the original photograph behind the masked foreground, "
-        "same location, era, lighting, lens, grain, colours and photographic style, "
-        "natural coherent background structure, no new prominent subject"
+        "object-removal photograph: reconstruct only the empty hidden scenery behind "
+        "the masked foreground; completely remove masked people, faces, bodies, clothing, "
+        "vehicles and foreground objects; faithfully continue the same architecture, ground, "
+        "location, era, lighting, lens, grain, colours and photographic style"
     )
     negative_prompt: str = (
-        "text, watermark, frame, border, duplicate person, extra face, deformed person, "
-        "modern objects, painting, illustration, blur, grey void, empty band"
+        "person, people, human, face, head, body, portrait, duplicate subject, mannequin, "
+        "vehicle, text, watermark, frame, border, modern objects, painting, illustration, "
+        "blur, grey void, empty band"
     )
     output_dir: Path = Path("outputs")
     output_format: str = "jpg"

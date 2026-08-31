@@ -23,6 +23,16 @@ class Backplate:
     threshold: float
 
 
+def make_backplate_alpha(mask: np.ndarray) -> np.ndarray:
+    """Limit a generated plate to pixels that were actually reconstructed.
+
+    Inpainting returns a full image whose unmasked pixels are copies of the source.
+    Treating that full image as opaque creates a second, differently shifted copy of
+    every face and silhouette. Only the reconstruction mask is valid hidden content.
+    """
+    return (mask > 0).astype(np.float32)
+
+
 def make_backplate_requests(
     depth: np.ndarray,
     *,

@@ -19,6 +19,7 @@ def convert_from_ui(
     view_cone: float,
     focus: float,
     face_relief: float,
+    head_sidewall: float,
     seed: int,
     prompt: str,
     progress=DEFAULT_PROGRESS,
@@ -32,6 +33,7 @@ def convert_from_ui(
         view_cone=view_cone,
         focus=focus,
         face_relief=face_relief,
+        head_sidewall=head_sidewall,
         seed=int(seed),
         output_dir=Path("outputs"),
     )
@@ -82,7 +84,10 @@ def build_ui() -> gr.Blocks:
                 with gr.Accordion("Depth and camera controls", open=False):
                     view_cone = gr.Slider(0.02, 0.13, value=0.075, step=0.002, label="Parallax")
                     focus = gr.Slider(0.0, 1.0, value=0.55, step=0.01, label="Focus plane")
-                    face_relief = gr.Slider(0.0, 0.15, value=0.07, step=0.005, label="Face relief")
+                    face_relief = gr.Slider(0.0, 0.18, value=0.10, step=0.005, label="Head relief")
+                    head_sidewall = gr.Slider(
+                        0.0, 0.25, value=0.12, step=0.01, label="Head side fill"
+                    )
                     seed = gr.Number(value=12345, precision=0, label="Generation seed")
                     prompt = gr.Textbox(
                         label="Optional reconstruction prompt",
@@ -109,6 +114,7 @@ def build_ui() -> gr.Blocks:
                 view_cone,
                 focus,
                 face_relief,
+                head_sidewall,
                 seed,
                 prompt,
             ],

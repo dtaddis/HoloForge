@@ -20,10 +20,14 @@ and has nothing to show when a foreground object moves aside. HoloForge instead 
 small layered scene:
 
 1. Depth Anything V2 Large estimates fine relative depth.
-2. A conservative face prior adds relief to noses, cheeks, and the facial oval.
+2. An expanded spheroidal head prior adds relief to the cranium, cheeks, and nose;
+   view-dependent head-edge extrusion supplies a narrow textured side surface before
+   the reconstructed background becomes visible.
 3. Two depth thresholds identify surfaces that will be exposed by parallax.
-4. SDXL inpainting reconstructs hidden colour while depth inpainting reconstructs hidden
-   geometry. Generation is composited only inside those masks.
+4. LaMa removes masked objects into a coherent coarse backplate; a restrained SDXL pass
+   refines its texture while depth inpainting reconstructs hidden geometry. Each generated
+   plate is visible only inside its own reconstruction mask, preventing shifted duplicate
+   faces from leaking into extreme views.
 5. A CUDA forward-splat renderer projects the shared scene through 60 viewpoints with a
    real z-buffer.
 6. Views are packed bottom-left to top-right using Looking Glass quilt ordering.
@@ -34,7 +38,7 @@ flicker.
 
 ## Hardware
 
-The high-quality defaults target an NVIDIA RTX 4090 with 24 GB VRAM and roughly 30–60
+The high-quality defaults target an NVIDIA RTX 4090 with 24 GB VRAM and roughly 60–120
 seconds per image after model warm-up. CUDA 13 wheels are installed on Windows and Linux.
 Apple Silicon installs CPU PyTorch and will work, but the generative path is not expected
 to meet that timing target.
@@ -126,6 +130,7 @@ sharing the quilt. Generated hidden detail is an interpretation, not historical 
   `depth-anything/Depth-Anything-V2-Small-hf`.
 - SDXL inpainting weights: use is governed by the model card and OpenRAIL-family licence
   downloaded with the model.
+- LaMa object-removal weights and the small TorchScript wrapper source are Apache-2.0.
 
 The weights are not redistributed by this repository; Hugging Face downloads them into
 the user's local cache on first use.

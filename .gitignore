@@ -6,4 +6,5 @@ __pycache__/
 .ruff_cache/
 models/
 outputs/
+outputs_quality*/
 *.egg-info/

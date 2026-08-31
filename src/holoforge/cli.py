@@ -20,7 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--layout", choices=["fit", "fill", "ambient"], default="ambient")
     parser.add_argument("--view-cone", type=float, default=0.075)
     parser.add_argument("--focus", type=float, default=0.55)
-    parser.add_argument("--face-relief", type=float, default=0.07)
+    parser.add_argument("--face-relief", type=float, default=0.10)
+    parser.add_argument("--head-sidewall", type=float, default=0.12)
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--prompt", default=None)
     parser.add_argument("--columns", type=int)
@@ -40,6 +41,7 @@ def main() -> None:
         view_cone=args.view_cone,
         focus=args.focus,
         face_relief=args.face_relief,
+        head_sidewall=args.head_sidewall,
         seed=args.seed,
         output_dir=args.output,
         output_format="png" if args.png else "jpg",

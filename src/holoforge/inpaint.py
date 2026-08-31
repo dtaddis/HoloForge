@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import cv2
 import numpy as np
 import torch
 from diffusers import AutoPipelineForInpainting
 from PIL import Image
+from torch.hub import download_url_to_file, get_dir
 
 from .image_utils import feather_mask
+
+LAMA_MODEL_URL = (
+    "https://github.com/enesmsahin/simple-lama-inpainting/"
+    "releases/download/v0.1.0/big-lama.pt"
+)
+LAMA_MODEL_SHA256 = "7ba7aa7ac37a4d41fdbbeba3a2af7ead18058552997e3a3cd1a3b2210c9e6b4c"
 
 
 class Inpainter(ABC):
@@ -41,8 +50,66 @@ class FastInpainter(Inpainter):
         return Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
 
 
+class LamaInpainter(Inpainter):
+    """Resolution-robust object removal used as the diffusion coarse pass."""
+
+    def __init__(self, device: str | None = None) -> None:
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = None
+
+    def _load(self) -> None:
+        if self.model is not None:
+            return
+        checkpoint = Path(get_dir()) / "checkpoints" / "big-lama.pt"
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        if not checkpoint.exists():
+            download_url_to_file(LAMA_MODEL_URL, str(checkpoint), progress=True)
+        digest = hashlib.sha256()
+        with checkpoint.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != LAMA_MODEL_SHA256:
+            raise RuntimeError(
+                f"LaMa checkpoint checksum mismatch: delete {checkpoint} and retry"
+            )
+        self.model = torch.jit.load(str(checkpoint), map_location=self.device)
+        self.model.eval().to(self.device)
+
+    @staticmethod
+    def _pad_to_modulo(array: np.ndarray, modulo: int = 8) -> np.ndarray:
+        height, width = array.shape[-2:]
+        pad_height = (-height) % modulo
+        pad_width = (-width) % modulo
+        return np.pad(array, ((0, 0), (0, pad_height), (0, pad_width)), mode="symmetric")
+
+    @torch.inference_mode()
+    def inpaint(
+        self,
+        image: Image.Image,
+        mask: np.ndarray,
+        *,
+        prompt: str = "",
+        negative_prompt: str = "",
+        seed: int = 0,
+    ) -> Image.Image:
+        del prompt, negative_prompt, seed
+        self._load()
+        assert self.model is not None
+        original = np.asarray(image.convert("RGB"), dtype=np.float32)
+        height, width = original.shape[:2]
+        colour = np.transpose(original / 255.0, (2, 0, 1))
+        binary_mask = (mask > 0).astype(np.float32)[None, ...]
+        colour = self._pad_to_modulo(colour)
+        binary_mask = self._pad_to_modulo(binary_mask)
+        colour_tensor = torch.from_numpy(colour).unsqueeze(0).to(self.device)
+        mask_tensor = torch.from_numpy(binary_mask).unsqueeze(0).to(self.device)
+        output = self.model(colour_tensor, mask_tensor)[0, :, :height, :width]
+        array = output.permute(1, 2, 0).detach().float().cpu().numpy()
+        return Image.fromarray(np.clip(array * 255.0, 0, 255).astype(np.uint8))
+
+
 class DiffusionInpainter(Inpainter):
-    """SDXL inpainting constrained to hidden regions."""
+    """LaMa object removal followed by restrained SDXL texture refinement."""
 
     def __init__(
         self,
@@ -61,6 +128,7 @@ class DiffusionInpainter(Inpainter):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.max_side = max_side
         self.pipe = None
+        self.coarse = LamaInpainter(device=self.device)
 
     def _load(self) -> None:
         if self.pipe is not None:
@@ -105,7 +173,14 @@ class DiffusionInpainter(Inpainter):
         assert self.pipe is not None
         original_size = image.size
         generation_size = self._generation_size(original_size, self.max_side)
-        source = image.resize(generation_size, Image.Resampling.LANCZOS)
+        coarse = self.coarse.inpaint(
+            image,
+            mask,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+        )
+        source = coarse.resize(generation_size, Image.Resampling.LANCZOS)
         mask_image = Image.fromarray(mask.astype(np.uint8)).resize(
             generation_size, Image.Resampling.NEAREST
         )
