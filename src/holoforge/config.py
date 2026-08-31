@@ -47,7 +47,6 @@ class ConversionConfig:
     depth_gamma: float = 1.0
     focus: float = 0.55
     face_relief: float = 0.10
-    head_sidewall: float = 0.12
     edge_refine: float = 0.65
     fill_mode: str = "ambient"
     seed: int = 12345

@@ -11,6 +11,19 @@ def test_backplate_masks_grow_deeper() -> None:
     assert requests[0].threshold > requests[1].threshold
 
 
+def test_backplate_reveal_is_inset_from_generation_boundary_and_omits_centre() -> None:
+    depth = np.zeros((100, 120), dtype=np.float32)
+    depth[20:80, 25:95] = 1.0
+    request = make_backplate_requests(
+        depth, count=1, foreground_fraction=0.25, dilation=8
+    )[0]
+    assert np.all(request.mask[request.alpha_mask > 0] == 255)
+    assert request.alpha_mask[50, 60] == 0
+    assert request.alpha_mask[50, 25] == 255
+    assert request.alpha_mask[50, 20] == 0
+    assert request.mask[50, 15] == 255
+
+
 def test_inpainted_depth_is_behind_removed_surface() -> None:
     depth = np.tile(np.linspace(0, 1, 80, dtype=np.float32), (40, 1))
     mask = np.zeros_like(depth, dtype=np.uint8)

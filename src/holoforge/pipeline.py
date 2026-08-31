@@ -15,8 +15,8 @@ from .depth import (
     DepthEstimator,
     apply_face_relief,
     draw_face_diagnostics,
-    make_head_support_mask,
     pin_noncontent_depth,
+    snap_depth_to_image_edges,
 )
 from .image_utils import depth_preview, load_rgb, prepare_frame, safe_stem
 from .inpaint import create_inpainter
@@ -82,7 +82,8 @@ class HoloForgePipeline:
             edge_refine=cfg.edge_refine,
             depth_gamma=cfg.depth_gamma,
         )
-        depth, faces = apply_face_relief(frame, depth_result.near_depth, cfg.face_relief)
+        edge_snapped_depth = snap_depth_to_image_edges(frame, depth_result.near_depth)
+        depth, faces = apply_face_relief(frame, edge_snapped_depth, cfg.face_relief)
         # Letterbox/ambient pixels are a presentation plane, not scene geometry.
         # Pinning them to focus prevents the large smeared bands that otherwise
         # appear when a far plane shifts out of frame at endpoint views.
@@ -91,8 +92,6 @@ class HoloForgePipeline:
         depth_path = run_dir / "depth.png"
         depth_preview(depth).save(depth_path)
         draw_face_diagnostics(frame, faces).save(run_dir / "faces.png")
-        head_alpha = make_head_support_mask(depth, faces)
-        Image.fromarray((head_alpha * 255).astype(np.uint8)).save(run_dir / "heads.png")
 
         self._notify(progress, 0.14, "Finding occluded regions")
         effective_dilation = max(
@@ -124,6 +123,7 @@ class HoloForgePipeline:
             )
             mask_path = run_dir / f"mask_{index + 1}.png"
             Image.fromarray(request.mask).save(mask_path)
+            Image.fromarray(request.alpha_mask).save(run_dir / f"reveal_{index + 1}.png")
             plate_image = inpainter.inpaint(
                 frame,
                 request.mask,
@@ -138,8 +138,8 @@ class HoloForgePipeline:
                 Backplate(
                     image=plate_image,
                     depth=plate_depth,
-                    alpha=make_backplate_alpha(request.mask),
-                    mask=request.mask,
+                    alpha=make_backplate_alpha(request.alpha_mask),
+                    mask=request.alpha_mask,
                     threshold=request.threshold,
                 )
             )
@@ -152,8 +152,6 @@ class HoloForgePipeline:
             backplates,
             view_cone=cfg.view_cone,
             focus=cfg.focus,
-            head_alpha=head_alpha,
-            head_sidewall=cfg.head_sidewall,
         )
         writer = QuiltWriter(cfg.preset)
         positions = np.linspace(-1.0, 1.0, cfg.preset.views)

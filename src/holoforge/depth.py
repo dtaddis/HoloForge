@@ -72,12 +72,54 @@ class DepthEstimator:
         return DepthResult(near.astype(np.float32), raw.astype(np.float32))
 
 
+def snap_depth_to_image_edges(
+    image: Image.Image,
+    depth: np.ndarray,
+    *,
+    radius: int = 4,
+    depth_threshold: float = 0.045,
+) -> np.ndarray:
+    """Remove intermediate-depth halos where RGB and depth boundaries agree.
+
+    Monocular depth upsampling often leaves a soft ramp between a foreground
+    silhouette and its background. Those few pixels travel at an intermediate
+    disparity and become detached copies at off-axis views. Strong photographic
+    edges provide the missing boundary cue: within their neighbourhood, snap the
+    ramp to whichever stable depth surface it is already closest to.
+    """
+    if radius <= 0:
+        return depth.astype(np.float32, copy=True)
+
+    gray = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2GRAY)
+    median = float(np.median(gray))
+    low = max(18, round(0.55 * median))
+    high = max(low + 1, round(1.35 * median))
+    photo_edges = cv2.Canny(gray, low, min(255, high), L2gradient=True)
+    zone_kernel = np.ones((2 * radius + 1,) * 2, np.uint8)
+    edge_zone = cv2.dilate(photo_edges, zone_kernel, iterations=1) > 0
+
+    # Use a smaller depth neighbourhood than the RGB support so the operation
+    # removes only the interpolation ramp rather than broadening either object.
+    depth_radius = max(1, radius // 2)
+    depth_kernel = np.ones((2 * depth_radius + 1,) * 2, np.uint8)
+    local_far = cv2.erode(depth, depth_kernel)
+    local_near = cv2.dilate(depth, depth_kernel)
+    transition = (local_near - local_far) >= depth_threshold
+    midpoint = (local_near + local_far) * 0.5
+    snapped = np.where(depth >= midpoint, local_near, local_far)
+
+    result = depth.astype(np.float32, copy=True)
+    use_snap = edge_zone & transition
+    result[use_snap] = snapped[use_snap]
+    return np.clip(result, 0, 1).astype(np.float32)
+
+
 def apply_face_relief(
     image: Image.Image,
     depth: np.ndarray,
     amount: float = 0.07,
 ) -> tuple[np.ndarray, list[tuple[int, int, int, int]]]:
-    """Add a conservative spheroidal head and nose prior to flat portraits."""
+    """Add subtle feature relief without guessing any hidden cranium geometry."""
     if amount <= 0:
         return depth, []
     if not hasattr(cv2, "CascadeClassifier") or not hasattr(cv2, "data"):
@@ -102,53 +144,27 @@ def sculpt_head_depth(
     faces: list[tuple[int, int, int, int]],
     amount: float,
 ) -> np.ndarray:
-    """Turn detected frontal faces into smoothly rounded head-depth islands.
+    """Add a tapered cheek/nose prior strictly inside each detected face.
 
-    Face detectors tightly frame the visible features and omit much of the hair and
-    cranium. A prior limited to that rectangle makes the face bulge while leaving a
-    cardboard-flat head. This expanded ellipsoid softly pulls the hair/temples toward
-    the face depth, then adds a smaller nose lobe. The prior reaches zero at the oval
-    boundary, avoiding a new hard depth seam.
+    A single photograph does not reveal the head's orientation or its hidden profile.
+    Expanding a frontal detector box into a spherical cranium can therefore overwrite
+    real background on three-quarter and profile portraits. This prior changes only
+    visible facial-feature pixels and smoothly reaches zero at the face ellipse.
     """
     if amount <= 0 or not faces:
         return depth.astype(np.float32, copy=True)
 
     result = depth.astype(np.float32, copy=True)
     yy, xx = np.mgrid[: depth.shape[0], : depth.shape[1]]
-    height, width = depth.shape
     for x, y, w, h in faces:
-        x0 = max(0, round(x + 0.18 * w))
-        x1 = min(width, round(x + 0.82 * w))
-        y0 = max(0, round(y + 0.14 * h))
-        y1 = min(height, round(y + 0.88 * h))
-        core = depth[y0:y1, x0:x1]
-        if core.size == 0:
-            continue
-        anchor = float(np.quantile(core, 0.62))
-
-        # The expanded support includes hair, ears, and the jaw rather than only
-        # the feature detector's rectangle.
-        head_x = (xx - (x + 0.50 * w)) / max(0.67 * w, 1)
-        head_y = (yy - (y + 0.38 * h)) / max(0.72 * h, 1)
-        radius2 = head_x * head_x + head_y * head_y
+        face_x = (xx - (x + 0.50 * w)) / max(0.48 * w, 1)
+        face_y = (yy - (y + 0.52 * h)) / max(0.50 * h, 1)
+        radius2 = face_x * face_x + face_y * face_y
         support = radius2 < 1.0
-        shell = np.sqrt(np.clip(1.0 - radius2, 0.0, 1.0))
-        blend = np.clip((1.0 - radius2) / 0.34, 0.0, 1.0)
-        blend = blend * blend * (3.0 - 2.0 * blend)
-
-        # Keep the head a coherent near-depth surface, while retaining stronger
-        # monocular detail where the estimator already found it.
-        target = anchor - 0.18 * amount + 0.58 * amount * shell
-        raised = np.maximum(result, target)
-        result[support] = (
-            result[support] * (1.0 - blend[support]) + raised[support] * blend[support]
-        )
-
-        face_x = (xx - (x + 0.50 * w)) / max(0.50 * w, 1)
-        face_y = (yy - (y + 0.52 * h)) / max(0.56 * h, 1)
-        oval = np.exp(-2.4 * (face_x * face_x + face_y * face_y))
-        nose = np.exp(-18.0 * (face_x * face_x + ((face_y - 0.01) * 1.25) ** 2))
-        result[support] += amount * (0.24 * oval[support] + 0.48 * nose[support])
+        taper = np.clip(1.0 - radius2, 0.0, 1.0) ** 1.5
+        cheek = np.exp(-2.8 * radius2) * taper
+        nose = np.exp(-20.0 * (face_x * face_x + ((face_y - 0.02) * 1.35) ** 2)) * taper
+        result[support] += amount * (0.16 * cheek[support] + 0.50 * nose[support])
 
     return np.clip(result, 0, 1).astype(np.float32)
 
@@ -162,33 +178,6 @@ def pin_noncontent_depth(
     result = depth.astype(np.float32, copy=True)
     result[content_alpha < 0.5] = float(np.clip(focus, 0.0, 1.0))
     return result
-
-
-def make_head_support_mask(
-    depth: np.ndarray,
-    faces: list[tuple[int, int, int, int]],
-) -> np.ndarray:
-    """Select near-depth head pixels for view-dependent side-surface extrusion."""
-    mask = np.zeros_like(depth, dtype=np.float32)
-    yy, xx = np.mgrid[: depth.shape[0], : depth.shape[1]]
-    height, width = depth.shape
-    for x, y, w, h in faces:
-        x0 = max(0, round(x + 0.18 * w))
-        x1 = min(width, round(x + 0.82 * w))
-        y0 = max(0, round(y + 0.14 * h))
-        y1 = min(height, round(y + 0.88 * h))
-        core = depth[y0:y1, x0:x1]
-        if core.size == 0:
-            continue
-        anchor = float(np.quantile(core, 0.55))
-        nx = (xx - (x + 0.50 * w)) / max(0.64 * w, 1)
-        ny = (yy - (y + 0.39 * h)) / max(0.70 * h, 1)
-        oval = (nx * nx + ny * ny) < 1.0
-        mask[oval & (depth >= anchor - 0.075)] = 1.0
-
-    if np.any(mask):
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    return mask.astype(np.float32)
 
 
 def draw_face_diagnostics(

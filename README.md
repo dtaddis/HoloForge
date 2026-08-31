@@ -20,14 +20,17 @@ and has nothing to show when a foreground object moves aside. HoloForge instead 
 small layered scene:
 
 1. Depth Anything V2 Large estimates fine relative depth.
-2. An expanded spheroidal head prior adds relief to the cranium, cheeks, and nose;
-   view-dependent head-edge extrusion supplies a narrow textured side surface before
-   the reconstructed background becomes visible.
+   RGB-guided boundary snapping removes the intermediate-depth fringe that otherwise
+   detaches from hair, clothing, and other silhouettes at endpoint views.
+2. A bounded facial-feature prior adds subtle cheek and nose relief only inside detected
+   face pixels. It never guesses a spherical cranium or paints a head edge over scenery,
+   so profile and three-quarter portraits retain their real silhouette.
 3. Two depth thresholds identify surfaces that will be exposed by parallax.
 4. LaMa removes masked objects into a coherent coarse backplate; a restrained SDXL pass
    refines its texture while depth inpainting reconstructs hidden geometry. Each generated
-   plate is visible only inside its own reconstruction mask, preventing shifted duplicate
-   faces from leaking into extreme views.
+   plate is generated with a wide cleanup margin but revealed only in the narrow bands
+   that parallax can expose. This keeps blend edges and hallucinated subject remnants out
+   of extreme views.
 5. A CUDA forward-splat renderer projects the shared scene through 60 viewpoints with a
    real z-buffer.
 6. Views are packed bottom-left to top-right using Looking Glass quilt ordering.
@@ -95,7 +98,7 @@ Each run creates a folder under `outputs/` containing:
 - a left-to-right wiggle GIF;
 - the centre view;
 - explicit left/right endpoint images and a side-by-side endpoint audit;
-- depth, face, layer-mask, and generated-backplate diagnostics;
+- depth, face, generation-mask, parallax-reveal, and generated-backplate diagnostics;
 - `conversion.json` with every setting required to reproduce the run.
 
 ## Musubi status
