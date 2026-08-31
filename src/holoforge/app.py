@@ -11,6 +11,14 @@ from .pipeline import HoloForgePipeline
 DEFAULT_PROGRESS = gr.Progress()
 
 
+def clean_optional_prompt(prompt: str | None) -> str | None:
+    """Normalise Gradio's untouched textbox value and whitespace-only input."""
+    if not prompt:
+        return None
+    cleaned = prompt.strip()
+    return cleaned or None
+
+
 def convert_from_ui(
     image_path: str,
     preset_name: str,
@@ -20,7 +28,7 @@ def convert_from_ui(
     focus: float,
     face_relief: float,
     seed: int,
-    prompt: str,
+    prompt: str | None,
     progress=DEFAULT_PROGRESS,
 ):
     if not image_path:
@@ -35,8 +43,9 @@ def convert_from_ui(
         seed=int(seed),
         output_dir=Path("outputs"),
     )
-    if prompt.strip():
-        cfg = replace(cfg, prompt=prompt.strip())
+    cleaned_prompt = clean_optional_prompt(prompt)
+    if cleaned_prompt:
+        cfg = replace(cfg, prompt=cleaned_prompt)
 
     def report(value: float, message: str) -> None:
         progress(value, desc=message)

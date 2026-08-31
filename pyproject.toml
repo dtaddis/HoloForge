@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "holoforge"
-version = "0.3.0"
+version = "0.3.1"
 description = "Local, generative 2D photo to Looking Glass light-field quilt converter"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
