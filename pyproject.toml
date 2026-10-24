@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "holoforge"
-version = "0.3.1"
-description = "Local, generative 2D photo to Looking Glass light-field quilt converter"
+version = "0.4.0"
+description = "Local 2D photo to Looking Glass hologram converter using MiniMax H3 camera orbits"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "Apache-2.0" }
@@ -43,6 +43,7 @@ dev = ["pytest>=8.3", "ruff>=0.9"]
 [project.scripts]
 holoforge = "holoforge.cli:main"
 holoforge-ui = "holoforge.app:main"
+holoforge-portrait = "holoforge.cli:portrait_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/holoforge"]
