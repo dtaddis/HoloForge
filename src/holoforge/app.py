@@ -5,12 +5,10 @@ from pathlib import Path
 
 import gradio as gr
 
-from .config import PRESETS, ConversionConfig, OrbitConfig
+from .config import PRESETS, OrbitConfig
 from .orbit import ORBIT_LORA, OrbitSettings
 
 DEFAULT_PROGRESS = gr.Progress()
-ORBIT = "H3 orbit (MiniMax H3 via ComfyUI)"
-LAYERED = "Layered (depth + inpainting)"
 
 
 def clean_optional_prompt(prompt: str | None) -> str | None:
@@ -104,49 +102,8 @@ def convert_orbit(
     )
 
 
-def convert_layered(
-    image_path: str,
-    preset_name: str,
-    inpaint_mode: str,
-    layout: str,
-    view_cone: float,
-    focus: float,
-    face_relief: float,
-    seed: int,
-    prompt: str | None,
-    report,
-):
-    from .pipeline import HoloForgePipeline
-
-    cfg = ConversionConfig(
-        preset=PRESETS[preset_name],
-        inpaint_mode=inpaint_mode,
-        fill_mode=layout,
-        view_cone=view_cone,
-        focus=focus,
-        face_relief=face_relief,
-        seed=int(seed),
-        output_dir=Path("outputs"),
-    )
-    cleaned_prompt = clean_optional_prompt(prompt)
-    if cleaned_prompt:
-        cfg = replace(cfg, prompt=cleaned_prompt)
-    result = HoloForgePipeline(cfg).convert(image_path, report)
-    return (
-        None,
-        str(result.wiggle_path),
-        str(result.centre_view_path),
-        str(result.depth_path),
-        str(result.quilt_path),
-        None,
-        str(result.metadata_path),
-        f"Finished in {result.elapsed_seconds:.1f} seconds.",
-    )
-
-
 def convert_from_ui(
     image_path: str,
-    method: str,
     preset_name: str,
     layout: str,
     sweep: float,
@@ -155,10 +112,6 @@ def convert_from_ui(
     pdd: bool,
     comfy_url: str,
     push: bool,
-    inpaint_mode: str,
-    view_cone: float,
-    focus: float,
-    face_relief: float,
     seed: int,
     prompt: str | None,
     progress=DEFAULT_PROGRESS,
@@ -170,14 +123,9 @@ def convert_from_ui(
         progress(value, desc=message)
 
     try:
-        if method == ORBIT:
-            return convert_orbit(
-                image_path, preset_name, layout, sweep, use_lora, steps, pdd,
-                comfy_url, push, seed, prompt, report,
-            )  # fmt: skip
-        return convert_layered(
-            image_path, preset_name, inpaint_mode, layout, view_cone, focus,
-            face_relief, seed, prompt, report,
+        return convert_orbit(
+            image_path, preset_name, layout, sweep, use_lora, steps, pdd,
+            comfy_url, push, seed, prompt, report,
         )  # fmt: skip
     except gr.Error:
         raise
@@ -190,8 +138,8 @@ def build_ui() -> gr.Blocks:
         gr.Markdown(
             """
             # HoloForge
-            **Turn a 2D photograph into a Looking Glass hologram.** The H3 orbit method asks
-            MiniMax H3 (running in your local ComfyUI) to fly a camera round the frozen scene,
+            **Turn a 2D photograph into a Looking Glass hologram.** HoloForge asks MiniMax H3
+            (running in your local ComfyUI) to fly a camera round the frozen scene,
             starting and ending on the photograph, then builds the quilt from the views either
             side of it. With a Looking Glass Portrait connected by USB, the result is added to
             its standalone playlist.
@@ -200,7 +148,6 @@ def build_ui() -> gr.Blocks:
         with gr.Row():
             with gr.Column(scale=1):
                 image = gr.Image(type="filepath", label="Source photograph")
-                method = gr.Radio(choices=[ORBIT, LAYERED], value=ORBIT, label="Method")
                 preset = gr.Dropdown(
                     choices=list(PRESETS), value="portrait", label="Display preset"
                 )
@@ -210,7 +157,7 @@ def build_ui() -> gr.Blocks:
                     label="Framing",
                     info="ambient: whole photo over a blurred fill; fill: crop to the display",
                 )
-                with gr.Group(visible=True) as orbit_group:
+                with gr.Group():
                     sweep = gr.Slider(
                         10, 40, value=30, step=1, label="3D strength (degrees of orbit)"
                     )
@@ -229,15 +176,6 @@ def build_ui() -> gr.Blocks:
                         comfy_url = gr.Textbox(
                             value="http://127.0.0.1:8188", label="ComfyUI server"
                         )
-                with gr.Accordion("Layered settings", open=False, visible=False) as layered:
-                    inpaint = gr.Radio(
-                        choices=["generative", "fast"],
-                        value="generative",
-                        label="Hidden-detail reconstruction",
-                    )
-                    view_cone = gr.Slider(0.02, 0.13, value=0.075, step=0.002, label="Parallax")
-                    focus = gr.Slider(0.0, 1.0, value=0.55, step=0.01, label="Focus plane")
-                    face_relief = gr.Slider(0.0, 0.18, value=0.10, step=0.005, label="Face relief")
                 seed = gr.Number(value=12345, precision=0, label="Seed")
                 prompt = gr.Textbox(
                     label="Optional prompt override",
@@ -250,21 +188,16 @@ def build_ui() -> gr.Blocks:
                 orbit_video = gr.Video(label="Generated orbit")
                 wiggle = gr.Image(label="Parallax preview", type="filepath")
                 centre = gr.Image(label="Centre view", type="filepath")
-                diagnostic = gr.Image(label="Viewing angles / depth", type="filepath")
+                diagnostic = gr.Image(label="Viewing angles", type="filepath")
                 quilt = gr.File(label="Quilt")
                 recording = gr.File(label="Portrait recording (__lkgrec.mp4)")
                 metadata = gr.File(label="Conversion settings")
 
-        def switch(selected: str):
-            is_orbit = selected == ORBIT
-            return gr.update(visible=is_orbit), gr.update(visible=not is_orbit)
-
-        method.change(switch, inputs=method, outputs=[orbit_group, layered])
         run.click(
             convert_from_ui,
             inputs=[
-                image, method, preset, layout, sweep, use_lora, steps, pdd, comfy_url,
-                push, inpaint, view_cone, focus, face_relief, seed, prompt,
+                image, preset, layout, sweep, use_lora, steps, pdd, comfy_url, push,
+                seed, prompt,
             ],
             outputs=[orbit_video, wiggle, centre, diagnostic, quilt, recording, metadata, status],
         ).then(portrait_status, outputs=status_portrait)  # fmt: skip

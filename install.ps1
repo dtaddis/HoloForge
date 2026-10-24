@@ -25,4 +25,4 @@ if (-not $uv) {
 
 Write-Host ""
 Write-Host "Installation complete. Run .\run.ps1 to open HoloForge."
-Write-Host "AI model weights download on first use and are then cached locally."
+Write-Host "HoloForge drives MiniMax H3 in your local ComfyUI: see README.md for the model files."

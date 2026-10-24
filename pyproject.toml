@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "Apache-2.0" }
 authors = [{ name = "HoloForge contributors" }]
-keywords = ["looking-glass", "light-field", "hologram", "depth", "inpainting"]
+keywords = ["looking-glass", "light-field", "hologram", "minimax-h3", "comfyui", "quilt"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -18,18 +18,12 @@ classifiers = [
   "Topic :: Multimedia :: Graphics :: 3D Rendering",
 ]
 
+# The heavy lifting (MiniMax H3) runs in ComfyUI; HoloForge itself needs no PyTorch.
 dependencies = [
-  "accelerate>=1.2",
-  "diffusers>=0.32",
   "gradio>=5.12,<7",
-  "huggingface-hub>=0.27",
   "numpy>=2.0",
   "opencv-python-headless>=4.10,<5",
   "Pillow>=11.0",
-  "safetensors>=0.5",
-  "torch>=2.11",
-  "torchvision>=0.26",
-  "transformers>=4.48",
 ]
 
 [project.urls]
@@ -47,26 +41,6 @@ holoforge-portrait = "holoforge.cli:portrait_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/holoforge"]
-
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
-  { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" },
-]
-torchvision = [
-  { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
-  { index = "pytorch-cu130", marker = "sys_platform != 'darwin'" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

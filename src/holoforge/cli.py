@@ -6,7 +6,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from .config import PRESETS, ConversionConfig, OrbitConfig
+from .config import PRESETS, OrbitConfig
 from .orbit import MOTION_PROMPTS, ORBIT_LORA, OrbitSettings
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
@@ -25,20 +25,13 @@ def expand_inputs(paths: list[Path]) -> list[Path]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="holoforge",
-        description="Convert 2D photos into multi-view Looking Glass quilts.",
+        description="Convert 2D photos into Looking Glass holograms with MiniMax H3 camera "
+        "orbits rendered in a local ComfyUI.",
     )
     parser.add_argument("inputs", type=Path, nargs="+", help="Photos or folders of photos")
     parser.add_argument("--output", type=Path, default=Path("outputs"))
-    parser.add_argument(
-        "--method",
-        choices=["orbit", "layered"],
-        default="orbit",
-        help="orbit: MiniMax H3 camera orbit via local ComfyUI (default); "
-        "layered: depth + inpainted backplates",
-    )
-    parser.add_argument("--preset", choices=PRESETS, default=None, help="Default: portrait (orbit)")
+    parser.add_argument("--preset", choices=PRESETS, default="portrait")
     parser.add_argument("--layout", choices=["fit", "fill", "ambient"], default="ambient")
-    parser.add_argument("--view-cone", type=float, default=None, help="Layered parallax")
     parser.add_argument("--seed", type=int, default=12345)
     parser.add_argument("--prompt", default=None, help="Replace the whole generation prompt")
     parser.add_argument("--columns", type=int)
@@ -47,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aspect", type=float)
     parser.add_argument("--png", action="store_true", help="Write lossless PNG instead of JPEG")
 
-    orbit = parser.add_argument_group("orbit method")
+    orbit = parser.add_argument_group("H3 orbit")
     orbit.add_argument("--motion", choices=MOTION_PROMPTS, default="orbit")
     orbit.add_argument("--sweep", type=float, help="Degrees of orbit across the quilt (default 30)")
     orbit.add_argument("--subject", default=None, help="Who/what is in the photo, for the prompt")
@@ -87,41 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
     orbit.add_argument("--push", action="store_true", help="Copy results to a connected Portrait")
     orbit.add_argument("--device", type=Path, help="Portrait drive (default: auto-detect)")
 
-    layered = parser.add_argument_group("layered method")
-    layered.add_argument("--inpaint", choices=["generative", "fast"], default="generative")
-    layered.add_argument("--focus", type=float, default=0.55)
-    layered.add_argument("--face-relief", type=float, default=0.10)
     return parser
 
 
 def progress(value: float, message: str) -> None:
     print(f"[{value * 100:5.1f}%] {message}", flush=True)
-
-
-def run_layered(args: argparse.Namespace, images: list[Path]) -> None:
-    from .pipeline import HoloForgePipeline
-
-    cfg = ConversionConfig(
-        preset=PRESETS[args.preset or "musubi"],
-        inpaint_mode=args.inpaint,
-        fill_mode=args.layout,
-        view_cone=args.view_cone if args.view_cone is not None else 0.075,
-        focus=args.focus,
-        face_relief=args.face_relief,
-        seed=args.seed,
-        output_dir=args.output,
-        output_format="png" if args.png else "jpg",
-    ).with_preset_overrides(
-        columns=args.columns, rows=args.rows, quilt_size=args.quilt_size, aspect=args.aspect
-    )
-    if args.prompt:
-        cfg = replace(cfg, prompt=args.prompt)
-    pipeline = HoloForgePipeline(cfg)
-    for image in images:
-        result = pipeline.convert(image, progress)
-        print(f"Quilt: {result.quilt_path.resolve()}")
-        print(f"Preview: {result.wiggle_path.resolve()}")
-        print(f"Elapsed: {result.elapsed_seconds:.1f}s")
 
 
 def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
@@ -136,7 +99,7 @@ def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
         calibration = Calibration.from_file(Path(device) / "LKG_calibration" / "visual.json")
 
     cfg = OrbitConfig(
-        preset=PRESETS[args.preset or "portrait"],
+        preset=PRESETS[args.preset],
         fill_mode=args.layout,
         output_dir=args.output,
         output_format="png" if args.png else "jpg",
@@ -222,10 +185,7 @@ def main() -> None:
     images = expand_inputs(args.inputs)
     if not images:
         sys.exit("No images found")
-    if args.method == "layered":
-        run_layered(args, images)
-    else:
-        run_orbit(args, images)
+    run_orbit(args, images)
 
 
 QUILT_PATTERN = re.compile(r"qs(\d+)x(\d+)a(\d+(?:\.\d+)?)", re.IGNORECASE)

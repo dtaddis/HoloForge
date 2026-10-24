@@ -9,3 +9,4 @@ fi
 uv python install 3.12
 uv sync --python 3.12
 echo "Installation complete. Run ./run.sh to open HoloForge."
+echo "HoloForge drives MiniMax H3 in your local ComfyUI: see README.md for the model files."

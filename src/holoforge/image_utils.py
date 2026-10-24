@@ -54,24 +54,3 @@ def prepare_frame(
     alpha = np.zeros((height, width), dtype=np.float32)
     alpha[y : y + inner[1], x : x + inner[0]] = 1.0
     return background, alpha
-
-
-def robust_normalize(array: np.ndarray, low: float = 1.0, high: float = 99.0) -> np.ndarray:
-    lo, hi = np.percentile(array[np.isfinite(array)], [low, high])
-    if hi <= lo:
-        return np.zeros_like(array, dtype=np.float32)
-    return np.clip((array - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
-
-
-def depth_preview(depth: np.ndarray) -> Image.Image:
-    gray = np.clip(depth * 255, 0, 255).astype(np.uint8)
-    colour = cv2.applyColorMap(gray, cv2.COLORMAP_TURBO)
-    return Image.fromarray(cv2.cvtColor(colour, cv2.COLOR_BGR2RGB))
-
-
-def feather_mask(mask: np.ndarray, radius: int = 5) -> np.ndarray:
-    mask = mask.astype(np.float32) / (255.0 if mask.max() > 1 else 1.0)
-    if radius <= 0:
-        return np.clip(mask, 0, 1)
-    sigma = max(0.5, radius / 2)
-    return np.clip(cv2.GaussianBlur(mask, (0, 0), sigma), 0, 1)
