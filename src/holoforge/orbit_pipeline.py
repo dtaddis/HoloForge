@@ -232,6 +232,7 @@ class OrbitPipeline:
                 "background_stillness": stillness,
                 "angle_span_degrees": plan.span,
                 "direction_score": plan.direction_score,
+                "side_scales": plan.side_scales,
                 "samples": [asdict(s) for s in plan.samples],
                 "views": [asdict(s) for s in plan.sources],
                 "warnings": plan.warnings,

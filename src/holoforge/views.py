@@ -61,6 +61,8 @@ class ViewPlan:
     requested: float
     direction_score: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    # Speed-up applied to the (leaving, returning) halves so both sides turn equally.
+    side_scales: tuple[float, float] = (1.0, 1.0)
 
 
 def _gray(image: Image.Image, width: int = ANALYSIS_WIDTH) -> np.ndarray:
@@ -153,11 +155,20 @@ class ViewpointSide:
 
     def measure(self, frame: Image.Image) -> tuple[float, int]:
         """(-1..1 camera-left amount, inlier count); (0, 0) when undetermined."""
+        side, _, inliers = self.measure_pose(frame)
+        return side, inliers
+
+    def measure_pose(self, frame: Image.Image) -> tuple[float, float, int]:
+        """(camera-left amount, yaw in degrees, inlier count); zeros when undetermined.
+
+        The yaw's scale depends on the assumed focal length, so only ratios of yaws measured
+        from the same reference are meaningful.
+        """
         if self.descriptors is None:
-            return 0.0, 0
+            return 0.0, 0.0, 0
         keypoints, descriptors = self.sift.detectAndCompute(_gray(frame, 640), None)
         if descriptors is None or len(keypoints) < 8:
-            return 0.0, 0
+            return 0.0, 0.0, 0
         pairs = self.matcher.knnMatch(self.descriptors, descriptors, k=2)
         good = [p[0] for p in pairs if len(p) == 2 and p[0].distance < 0.75 * p[1].distance]
         p0 = np.float32([self.keypoints[m.queryIdx].pt for m in good]).reshape(-1, 2)
@@ -165,17 +176,54 @@ class ViewpointSide:
         moved = np.linalg.norm(p1 - p0, axis=1) > 1.0
         p0, p1 = p0[moved], p1[moved]
         if len(p0) < 30:
-            return 0.0, 0
+            return 0.0, 0.0, 0
         essential, mask = cv2.findEssentialMat(p0, p1, self.camera, cv2.RANSAC, 0.999, 1.0)
         if essential is None or essential.shape != (3, 3):
-            return 0.0, 0
+            return 0.0, 0.0, 0
         inliers, rotation, translation, _ = cv2.recoverPose(
             essential, p0, p1, self.camera, mask=mask
         )
         if inliers < 30:
-            return 0.0, 0
+            return 0.0, 0.0, 0
         centre = (-rotation.T @ translation).ravel()
-        return float(-centre[0]), int(inliers)
+        yaw = float(np.degrees(np.arctan2(rotation[2, 0], rotation[2, 2])))
+        return float(-centre[0]), yaw, int(inliers)
+
+
+def side_balance(
+    frames: list[Image.Image], angles: np.ndarray, *, low: float = 3.0, high: float = 14.0
+) -> tuple[float, float]:
+    """Scale factors that make the two halves of an orbit turn equally fast near the photo.
+
+    The timed angles assume one constant-speed circle, but H3 may swing faster on one side.
+    The real yaw of a few frames on each side, measured from the photographed frame within
+    the range where matching is reliable, is compared with the timed angle there. Each side
+    is scaled to the mean of the two rates, which keeps the overall (timed) scale and so
+    does not depend on the unknown focal length. Returns (1, 1) unless both sides resolve.
+    """
+    meter = ViewpointSide(frames[0])
+    half = len(frames) // 2
+    rates: list[float] = []
+    for indices in (range(1, half), range(len(frames) - 1, half - 1, -1)):
+        picked = [i for i in indices if low <= abs(angles[i]) <= high]
+        if len(picked) > 7:
+            picked = [picked[round(k * (len(picked) - 1) / 6)] for k in range(7)]
+        ratios = []
+        for i in picked:
+            _, yaw, inliers = meter.measure_pose(frames[i])
+            if inliers:
+                ratios.append(abs(yaw) / abs(angles[i]))
+        # Only trust a side whose samples agree, and whose camera actually turns (a clip that
+        # slides the camera sideways has almost no yaw, and the ratio is then just noise).
+        if len(ratios) < 3:
+            return 1.0, 1.0
+        rate = float(np.median(ratios))
+        spread = float(np.median(np.abs(np.asarray(ratios) - rate))) / max(rate, 1e-9)
+        if not 0.2 <= rate <= 5.0 or spread > 0.35:
+            return 1.0, 1.0
+        rates.append(rate)
+    mean = (rates[0] + rates[1]) / 2
+    return tuple(float(np.clip(r / mean, 0.75, 1.33)) for r in rates)  # type: ignore[return-value]
 
 
 def direction_score(frames: list[Image.Image], angles: np.ndarray) -> float:
@@ -248,6 +296,13 @@ def plan_views(
         raise ValueError("An orbit needs at least three frames")
     steps = motion_steps(frames)
     angles = progress_angles(paced_steps(steps) if constant_speed else steps, motion)
+    balance = (1.0, 1.0)
+    if constant_speed:
+        balance = side_balance(frames, angles)
+        half_index = len(frames) // 2
+        angles = angles.copy()
+        angles[:half_index] *= balance[0]
+        angles[half_index:] *= balance[1]
     score = direction_score(frames, angles)
     sign = 1.0 if score >= 0 else -1.0
     warnings: list[str] = []
@@ -289,7 +344,7 @@ def plan_views(
         elif abs(b.angle - target) <= 0.15 * spacing:
             a, weight = b, 0.0
         sources.append(ViewSource(a.frame, b.frame, float(weight), float(target)))
-    return ViewPlan(sources, samples, (lo, hi), sweep_degrees, score, warnings)
+    return ViewPlan(sources, samples, (lo, hi), sweep_degrees, score, warnings, balance)
 
 
 def flow_blend(a: Image.Image, b: Image.Image, weight: float) -> Image.Image:

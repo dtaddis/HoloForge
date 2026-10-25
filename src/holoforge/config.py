@@ -35,9 +35,10 @@ class OrbitConfig:
     """Settings for the MiniMax H3 orbit method (see orbit.py and views.py)."""
 
     preset: Preset = PRESETS["portrait"]
-    # Total orbit angle spanned from the leftmost to the rightmost view. The Portrait's
-    # optical view cone is 40 degrees; a little less keeps backgrounds from smearing.
-    sweep_degrees: float = 30.0
+    # Total orbit angle spanned from the leftmost to the rightmost view. Matching the display's
+    # view cone (40 degrees on the Portrait, from its calibration) is orthoscopic: the scene
+    # turns exactly as far as the viewer's eye moves.
+    sweep_degrees: float = 40.0
     # Re-render once with camera-insistent wording when H3 makes a turntable clip (subjects
     # rotate in front of a frozen background); keep whichever clip has more real parallax.
     flat_retry: bool = True

@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     orbit = parser.add_argument_group("H3 orbit")
     orbit.add_argument("--motion", choices=MOTION_PROMPTS, default="orbit")
-    orbit.add_argument("--sweep", type=float, help="Degrees of orbit across the quilt (default 30)")
+    orbit.add_argument("--sweep", type=float, help="Degrees of orbit across the quilt (default 40, the Portrait's view cone)")
     orbit.add_argument("--subject", default=None, help="Who/what is in the photo, for the prompt")
     orbit.add_argument("--style", default=None, help="e.g. 'Vintage film photograph'")
     orbit.add_argument(

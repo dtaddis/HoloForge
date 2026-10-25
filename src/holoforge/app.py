@@ -159,7 +159,12 @@ def build_ui() -> gr.Blocks:
                 )
                 with gr.Group():
                     sweep = gr.Slider(
-                        10, 40, value=30, step=1, label="3D strength (degrees of orbit)"
+                        10,
+                        50,
+                        value=40,
+                        step=1,
+                        label="3D strength (degrees of orbit)",
+                        info="40 matches the Portrait's view cone (true depth)",
                     )
                     use_lora = gr.Checkbox(
                         value=True,
