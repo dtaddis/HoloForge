@@ -33,6 +33,8 @@ from PIL import Image
 
 ANALYSIS_WIDTH = 480
 FIT_MARGIN = 0.06
+# Frame-to-frame motion below this (pixels at ANALYSIS_WIDTH) is jitter, not camera motion.
+JITTER_PX = 0.25
 # Assumed half-amplitude of the "sweep" motion prompt (right, back, left, back).
 SWEEP_AMPLITUDE = 25.0
 
@@ -95,9 +97,11 @@ def motion_steps(frames: list[Image.Image]) -> np.ndarray:
         weights = _texture_weights(grays[i - 1])
         magnitude = np.hypot(f[..., 0], f[..., 1])
         steps[i] = (weights * magnitude).sum() / max(weights.sum(), 1e-9)
-    # Sub-pixel jitter while H3 holds a keyframe is noise, not motion.
-    noise = np.percentile(steps[1:], 10) if len(steps) > 2 else 0.0
-    return np.clip(steps - noise, 0.0, None)
+    # H3's frozen keyframe holds measure well under a quarter pixel; anything above that is
+    # real camera motion. (A relative floor, such as the stillest frames' step, wipes out the
+    # first and last moments of clips that never pause and makes the centre views jump.)
+    steps[steps < JITTER_PX] = 0.0
+    return steps
 
 
 def paced_steps(steps: np.ndarray) -> np.ndarray:
