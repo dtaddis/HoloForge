@@ -4,7 +4,13 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from holoforge.portrait import Calibration, push_recordings, recording_name, render_lenticular
+from holoforge.portrait import (
+    Calibration,
+    push_recordings,
+    recording_name,
+    render_lenticular,
+    replace_playlist,
+)
 
 # The Portrait (LKG-PORT-03650) whose uniforms Looking Glass Studio logged while syncing.
 VISUAL = {
@@ -83,3 +89,28 @@ def test_push_recordings_prepends_and_dedupes(tmp_path: Path) -> None:
     assert (device / "playlist.m3u.holoforge-backup").read_text(encoding="utf-8").strip() == (
         "a.mp4__lkgrec.mp4"
     )
+
+
+def test_replace_playlist_keeps_only_the_given_recordings(tmp_path: Path) -> None:
+    device = tmp_path / "device"
+    (device / "LKG_calibration").mkdir(parents=True)
+    (device / "LKG_calibration" / "visual.json").write_text("{}", encoding="utf-8")
+    (device / "old.png__lkgrec.mp4").write_bytes(b"old")
+    (device / "playlist.json").write_text(
+        json.dumps([{"filename": "old.png", "last_updated": "never", "needs_sync": False}]),
+        encoding="utf-8",
+    )
+    (device / "playlist.m3u").write_text("old.png__lkgrec.mp4\n", encoding="utf-8")
+    a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    a.write_bytes(b"a")
+    b.write_bytes(b"b")
+
+    removed = replace_playlist(device, [("b_qs8x6a0.75.jpg", b), ("a_qs8x6a0.75.jpg", a)])
+
+    assert removed == ["old.png__lkgrec.mp4"]
+    playlist = json.loads((device / "playlist.json").read_text(encoding="utf-8"))
+    assert [item["filename"] for item in playlist] == ["b_qs8x6a0.75.jpg", "a_qs8x6a0.75.jpg"]
+    lines = (device / "playlist.m3u").read_text(encoding="utf-8").split()
+    assert lines == [recording_name("b_qs8x6a0.75.jpg"), recording_name("a_qs8x6a0.75.jpg")]
+    assert sorted(p.name for p in device.glob("*__lkgrec.mp4")) == sorted(lines)
+    assert (device / "LKG_calibration" / "visual.json").exists()

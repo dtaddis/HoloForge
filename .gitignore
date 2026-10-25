@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 models/
-outputs/
-outputs_quality*/
+# Conversion results: personal photos, never committed.
+outputs*/
 *.egg-info/
+# Local Claude Code preview configuration.
+.claude/

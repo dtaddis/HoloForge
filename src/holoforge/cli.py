@@ -193,7 +193,13 @@ QUILT_PATTERN = re.compile(r"qs(\d+)x(\d+)a(\d+(?:\.\d+)?)", re.IGNORECASE)
 
 def portrait_main() -> None:
     """holoforge-portrait: interlace existing quilts and copy them to a Portrait."""
-    from .portrait import Calibration, find_portrait_drive, prepare_recording, push_recordings
+    from .portrait import (
+        Calibration,
+        find_portrait_drive,
+        prepare_recording,
+        push_recordings,
+        replace_playlist,
+    )
 
     parser = argparse.ArgumentParser(
         prog="holoforge-portrait",
@@ -205,7 +211,15 @@ def portrait_main() -> None:
     parser.add_argument("--output", type=Path, help="Keep recordings here (default: beside quilt)")
     parser.add_argument("--append", action="store_true", help="Add to the end of the playlist")
     parser.add_argument("--no-push", action="store_true", help="Only render the recordings")
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Make the Portrait play only these quilts, in this order, and delete every other "
+        "*__lkgrec.mp4 recording on it",
+    )
     args = parser.parse_args()
+    if args.replace and (args.append or args.no_push):
+        sys.exit("--replace cannot be combined with --append or --no-push")
 
     device = args.device or find_portrait_drive()
     if device is None:
@@ -222,7 +236,12 @@ def portrait_main() -> None:
         )
         print(f"Rendered {recording}")
         entries.append((quilt.name, recording))
-    if not args.no_push:
+    if args.replace:
+        removed = replace_playlist(Path(device), entries)
+        print(f"Playlist on {device} now has exactly {len(entries)} item(s)")
+        for name in removed:
+            print(f"  removed {name}")
+    elif not args.no_push:
         push_recordings(Path(device), entries, first=not args.append)
         print(f"Added {len(entries)} item(s) to the playlist on {device}")
 

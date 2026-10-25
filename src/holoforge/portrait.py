@@ -267,6 +267,32 @@ def push_recordings(
     m3u_path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8", newline="")
 
 
+def replace_playlist(device: Path, entries: list[tuple[str, Path]]) -> list[str]:
+    """Make the device play exactly these entries, in order.
+
+    Copies the recordings, rewrites both playlists to list only them, and deletes every other
+    ``*__lkgrec.mp4`` recording from the device root. Other files (calibration, system
+    folders, playlist backups) are left alone. Returns the names of the deleted recordings.
+    """
+    keep = {recording_name(name) for name, _ in entries}
+    if len(keep) != len(entries):
+        raise ValueError("Duplicate quilt names in the new playlist")
+    # Free space first: the replaced recordings may be what makes room for the new ones.
+    removed = []
+    for path in sorted(device.glob(f"*{RECORDING_SUFFIX}")):
+        if path.name not in keep:
+            path.unlink()
+            removed.append(path.name)
+    json_path = device / "playlist.json"
+    m3u_path = device / "playlist.m3u"
+    _backup_once(json_path)
+    _backup_once(m3u_path)
+    json_path.write_text("[]", encoding="utf-8", newline="\r\n")
+    m3u_path.write_text("", encoding="utf-8", newline="")
+    push_recordings(device, entries, first=False)
+    return removed
+
+
 def prepare_recording(
     quilt_path: str | Path,
     columns: int,

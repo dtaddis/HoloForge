@@ -145,10 +145,12 @@ Studio must be installed but never has to be opened.
 
 ```powershell
 uv run holoforge-portrait "outputs\photo\photo_quilt_qs8x6a0.75.jpg"   # any existing quilt
+uv run holoforge-portrait (Get-ChildItem outputs\*\*_qs8x6a0.75.jpg) --replace   # only these
 ```
 
-New items go to the front of the playlist and existing ones are kept; the original playlists
-are backed up once as `*.holoforge-backup`. To view them, eject the Portrait's drive, unplug
+New items go to the front of the playlist and existing ones are kept; `--replace` instead
+makes the Portrait play only the given quilts, in order, and deletes every other recording on
+it. The original playlists are backed up once as `*.holoforge-backup`. To view them, eject the Portrait's drive, unplug
 it from the computer and power it from USB-C alone. A later sync from Looking Glass Studio
 rewrites the playlist from Studio's own library and may drop these items.
 
