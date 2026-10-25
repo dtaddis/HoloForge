@@ -100,6 +100,21 @@ def motion_steps(frames: list[Image.Image]) -> np.ndarray:
     return np.clip(steps - noise, 0.0, None)
 
 
+def paced_steps(steps: np.ndarray) -> np.ndarray:
+    """Frame-to-frame progress for a constant-speed orbit with pauses at either end.
+
+    The orbit LoRA cruises at constant speed, but H3 may still hold the first or last frames
+    or ease in and out. Raw flow magnitude is a poor clock (nearby surroundings sweep past
+    faster than distant ones), so each step counts as its share of the cruising speed: a
+    pause counts as zero, easing as a fraction, and cruising frames count equally.
+    """
+    moving = steps[steps > 0]
+    if moving.size == 0:
+        return steps
+    cruising = steps[steps > 0.25 * np.median(moving)]
+    return np.clip(steps / max(float(np.median(cruising)), 1e-6), 0.0, 1.0)
+
+
 def progress_angles(steps: np.ndarray, motion: str = "orbit") -> np.ndarray:
     """Signed angle per frame, positive on the side the clip leaves towards."""
     travel = np.cumsum(steps)
@@ -216,16 +231,14 @@ def plan_views(
 ) -> ViewPlan:
     """Choose a source (or flow blend of two) for each quilt view, leftmost camera first.
 
-    sweep_degrees is the total viewing angle the quilt spans. constant_speed trusts frame
-    numbers instead of measured motion: the orbit LoRA was trained on constant-speed renders,
-    and flow magnitude overstates progress while nearby surroundings sweep past.
+    sweep_degrees is the total viewing angle the quilt spans. constant_speed is for orbit-LoRA
+    clips, trained on constant-speed renders: frames count evenly while the camera cruises
+    and not at all while it pauses (see paced_steps), instead of by raw flow magnitude.
     """
     if len(frames) < 3:
         raise ValueError("An orbit needs at least three frames")
-    if constant_speed:
-        angles = progress_angles(np.ones(len(frames)) - np.eye(1, len(frames))[0], motion)
-    else:
-        angles = progress_angles(motion_steps(frames), motion)
+    steps = motion_steps(frames)
+    angles = progress_angles(paced_steps(steps) if constant_speed else steps, motion)
     score = direction_score(frames, angles)
     sign = 1.0 if score >= 0 else -1.0
     warnings: list[str] = []
