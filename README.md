@@ -52,41 +52,48 @@ optionally written by a local Ollama vision model (`qwen2.5vl:7b`).
 
 ## Install
 
-### 1. ComfyUI with MiniMax H3
+On Windows, in PowerShell in the cloned repository:
 
-H3 runs in [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 0.30 or newer with the
-[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) custom nodes. Put these files in
-ComfyUI's `models` folders:
+```powershell
+.\install.ps1
+.un.ps1
+```
+
+On Linux or macOS, install [`uv`](https://docs.astral.sh/uv/) and ffmpeg (`brew install ffmpeg`
+or `sudo apt install ffmpeg`), then run `./install.sh` and `./run.sh`.
+
+The installer sets up HoloForge itself (a light Python app with no PyTorch, using the `uv`
+Python manager, which it installs with `winget` if needed), then offers the one-time
+rendering setup, `holoforge-setup`, which you can also run later with `uv run holoforge-setup`:
+
+1. **ComfyUI.** Give it the folder of a ComfyUI you already have, or let it clone a fresh one
+   into `tools\comfyui` with its own Python environment and CUDA PyTorch (about 6 GB; git
+   required). Either way it adds the [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF)
+   nodes if they are missing; it never updates or reinstalls anything in a ComfyUI it did not
+   install itself.
+2. **Models.** After you confirm the MiniMax H3 licence covers you (see Licences), it
+   downloads the four files below from Hugging Face into ComfyUI's `models` folders, about
+   34 GB in total.
+3. **ffmpeg.** On Windows it downloads the free [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
+   build into `toolsfmpeg`; elsewhere it uses the ffmpeg on your PATH.
 
 | folder | file | source |
 |---|---|---|
-| `diffusion_models` | `MiniMax-H3-FL2VA-Pruned-Q5_K_M.gguf` | [Abiray/MiniMax-H3-Pruned-GGUF](https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF) |
-| `text_encoders` | `qwen3vl-32B-MiniMax-H3-Q4_K_M.gguf` | [realrebelai/MiniMax-H3_GGUFs](https://huggingface.co/realrebelai/MiniMax-H3_GGUFs) |
-| `vae` | `minimax_h3_video_vae_fp16.safetensors` | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) (`vae/`) |
-| `loras` | `minimax_h3_flf2v_lora_v1.safetensors` | [pablodawson/MiniMax-H3-360-Orbit-LoRA](https://huggingface.co/pablodawson/MiniMax-H3-360-Orbit-LoRA) |
+| `diffusion_models` | `MiniMax-H3-FL2VA-Pruned-Q5_K_M.gguf` (14.1 GB) | [Abiray/MiniMax-H3-Pruned-GGUF](https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF) |
+| `text_encoders` | `qwen3vl-32B-MiniMax-H3-Q4_K_M.gguf` (14.6 GB) | [realrebelai/MiniMax-H3_GGUFs](https://huggingface.co/realrebelai/MiniMax-H3_GGUFs) |
+| `vae` | `minimax_h3_video_vae_fp16.safetensors` (5.2 GB) | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) (`vae/`) |
+| `loras` | `minimax_h3_flf2v_lora_v1.safetensors` (0.2 GB) | [pablodawson/MiniMax-H3-360-Orbit-LoRA](https://huggingface.co/pablodawson/MiniMax-H3-360-Orbit-LoRA) |
 
-Other quantisations work too: `--unet`, `--clip` and `--vae` pick different files, and
-non-GGUF files (such as Comfy-Org's int8 and nvfp4 repacks) load with ComfyUI's core loaders.
-Start ComfyUI before HoloForge; it expects it at `http://127.0.0.1:8188`.
+The choices are saved in `~/.holoforge/config.json`. When ComfyUI isn't running, HoloForge
+starts it in its own window as a conversion begins (for a ComfyUI it can find the Python for;
+pass `--comfy-python` to `holoforge-setup` if it can't). Other quantisations work too:
+`--unet`, `--clip` and `--vae` pick different files, and non-GGUF files (such as Comfy-Org's
+int8 and nvfp4 repacks) load with ComfyUI's core loaders.
 
 On an RTX 4090 (24 GB) a 141-frame 768p orbit, the longest that stays inside 24 GB, takes
 about 15 minutes at the default 28 steps. `--pdd` uses the 8-step PDD distillation
 ([alibaba-pai/MiniMax-H3-Acc-LoRAs](https://huggingface.co/alibaba-pai/MiniMax-H3-Acc-LoRAs))
 for about 2.5x speed at some cost in fidelity.
-
-### 2. HoloForge
-
-HoloForge itself is a light Python app with no PyTorch. On Windows, in PowerShell in the
-cloned repository:
-
-```powershell
-.\install.ps1
-.\run.ps1
-```
-
-The installer uses the [`uv`](https://docs.astral.sh/uv/) Python manager and installs it
-with `winget` if needed. On Linux or macOS, install `uv`, then run `./install.sh` and
-`./run.sh`.
 
 ## Use
 
@@ -143,9 +150,10 @@ drive. HoloForge does the same itself:
 
 - it reads the Portrait's own calibration from `LKG_calibration/visual.json`;
 - it reproduces Studio 1.7's `quilt_to_lent` shader and the values Studio logs for it;
-- it encodes with the ffmpeg bundled with Studio.
+- it encodes HEVC with the free x265 encoder, at a quality setting measured to keep the
+  lenticular pattern at least as faithfully as Studio's own encoder.
 
-Studio must be installed but never has to be opened.
+Looking Glass Studio is not needed.
 
 ```powershell
 uv run holoforge-portrait "outputs\photo\photo_quilt_qs8x6a0.75.jpg"   # any existing quilt

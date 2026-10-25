@@ -21,6 +21,7 @@ classifiers = [
 # The heavy lifting (MiniMax H3) runs in ComfyUI; HoloForge itself needs no PyTorch.
 dependencies = [
   "gradio>=5.12,<7",
+  "huggingface-hub>=0.27",
   "numpy>=2.0",
   "opencv-python-headless>=4.10,<5",
   "Pillow>=11.0",
@@ -38,6 +39,7 @@ dev = ["pytest>=8.3", "ruff>=0.9"]
 holoforge = "holoforge.cli:main"
 holoforge-ui = "holoforge.app:main"
 holoforge-portrait = "holoforge.cli:portrait_main"
+holoforge-setup = "holoforge.setup:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/holoforge"]

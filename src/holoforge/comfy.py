@@ -43,7 +43,8 @@ class ComfyClient:
             raise ComfyError(f"ComfyUI {path} failed ({exc.code}): {detail}") from exc
         except urllib.error.URLError as exc:
             raise ComfyError(
-                f"Cannot reach ComfyUI at {self.server}. Start it first ({exc.reason})."
+                f"Cannot reach ComfyUI at {self.server} ({exc.reason}). Start it, or run "
+                "`uv run holoforge-setup` so HoloForge can install and start it for you."
             ) from exc
 
     def object_info(self, node_class: str) -> dict:

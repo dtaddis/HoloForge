@@ -311,6 +311,10 @@ def generate_orbit(
     if cached is not None:
         return cached, signature
 
+    from .setup import start_comfyui_if_needed
+
+    # Start the ComfyUI that holoforge-setup recorded, if nothing is listening yet.
+    start_comfyui_if_needed(settings.server)
     client = ComfyClient(settings.server)
     unet_class = _unet_loader(settings.unet_name)["class_type"]
     clip_class = _clip_class(settings.clip_name)

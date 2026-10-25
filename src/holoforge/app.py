@@ -19,6 +19,12 @@ def clean_optional_prompt(prompt: str | None) -> str | None:
     return cleaned or None
 
 
+def comfy_status_line(comfy_url: str = "http://127.0.0.1:8188") -> str:
+    from .setup import comfy_status
+
+    return comfy_status(comfy_url.strip() or "http://127.0.0.1:8188")
+
+
 def portrait_status() -> str:
     from .portrait import find_portrait_drive
 
@@ -173,6 +179,7 @@ def build_ui() -> gr.Blocks:
                     )
                     push = gr.Checkbox(value=True, label="Add to the connected Portrait")
                     status_portrait = gr.Markdown(portrait_status())
+                    status_comfy = gr.Markdown(comfy_status_line())
                     with gr.Accordion("H3 settings", open=False):
                         steps = gr.Slider(8, 40, value=28, step=1, label="Sampling steps")
                         pdd = gr.Checkbox(
@@ -205,7 +212,12 @@ def build_ui() -> gr.Blocks:
                 seed, prompt,
             ],
             outputs=[orbit_video, wiggle, centre, diagnostic, quilt, recording, metadata, status],
-        ).then(portrait_status, outputs=status_portrait)  # fmt: skip
+        ).then(portrait_status, outputs=status_portrait).then(
+            comfy_status_line, inputs=comfy_url, outputs=status_comfy
+        )  # fmt: skip
+        # Refresh both on each page load: the Portrait or ComfyUI may have come and gone.
+        demo.load(portrait_status, outputs=status_portrait)
+        demo.load(comfy_status_line, inputs=comfy_url, outputs=status_comfy)
     return demo
 
 

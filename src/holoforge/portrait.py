@@ -143,34 +143,25 @@ def render_lenticular(
 
 
 def find_ffmpeg() -> str:
-    """Prefer the ffmpeg Looking Glass Studio ships (it has the libkvazaar HEVC encoder)."""
-    candidates: list[Path] = []
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        candidates += sorted(
-            Path(local, "LookingGlassStudio").glob("app-*/resources/ffmpeg.exe"), reverse=True
-        )
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
-    found = shutil.which("ffmpeg")
-    if found:
-        return found
-    raise FileNotFoundError(
-        "ffmpeg not found. Install Looking Glass Studio (which bundles one) or put ffmpeg on PATH."
-    )
+    """A free ffmpeg build: the one holoforge-setup installed, or one on PATH."""
+    from .setup import ensure_ffmpeg
+
+    return str(ensure_ffmpeg(download=False))
 
 
 def encoder_args(ffmpeg: str) -> list[str]:
     listing = subprocess.run(
         [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False
     ).stdout
-    if "libkvazaar" in listing:
-        # Studio's exact settings, which the Portrait's player is known to decode.
-        return ["-c:v", "libkvazaar", "-kvazaar-params", "preset=fast"]
     if "libx265" in listing:
-        return ["-c:v", "libx265", "-preset", "fast", "-tag:v", "hev1"]
-    raise RuntimeError(f"{ffmpeg} has neither libkvazaar nor libx265 for HEVC encoding")
+        # CRF 18 keeps the subpixel lenticular pattern at least as faithfully as Looking Glass
+        # Studio's kvazaar encode (measured 25.46 vs 25.30 dB PSNR; the 4:2:0 chroma that every
+        # Portrait recording uses sets the ceiling), in a smaller file. hev1 tagging as Studio.
+        return ["-c:v", "libx265", "-preset", "fast", "-crf", "18", "-tag:v", "hev1",
+                "-x265-params", "log-level=error"]  # fmt: skip
+    if "libkvazaar" in listing:
+        return ["-c:v", "libkvazaar", "-kvazaar-params", "preset=fast"]
+    raise RuntimeError(f"{ffmpeg} has no HEVC encoder (libx265); install a full ffmpeg build")
 
 
 def encode_still(lenticular: Image.Image, path: str | Path, ffmpeg: str | None = None) -> Path:

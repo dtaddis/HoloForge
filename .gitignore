@@ -10,3 +10,5 @@ outputs*/
 *.egg-info/
 # Local Claude Code preview configuration.
 .claude/
+# Managed ComfyUI, ffmpeg and model downloads from holoforge-setup.
+tools/
