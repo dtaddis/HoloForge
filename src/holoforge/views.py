@@ -180,16 +180,21 @@ def direction_score(frames: list[Image.Image], angles: np.ndarray) -> float:
     meter = ViewpointSide(frames[0])
     half = len(frames) // 2
 
-    def vote(indices: list[int]) -> float:
-        if len(indices) > 5:
-            indices = [indices[round(k * (len(indices) - 1) / 4)] for k in range(5)]
-        results = [meter.measure(frames[i]) for i in indices]
+    def vote(indices: range) -> float:
+        # Walk away from the photographed viewpoint and use the first frames that resolve:
+        # features on small or plain sources stop matching after a few degrees, so the
+        # nearest frames that have moved at all are the most reliable.
+        results: list[tuple[float, int]] = []
+        for i in indices:
+            if abs(angles[i]) > 30.0 or len(results) >= 4:
+                break
+            side, inliers = meter.measure(frames[i])
+            if inliers:
+                results.append((side, inliers))
         weight = sum(n for _, n in results)
         return sum(side * n for side, n in results) / weight if weight else 0.0
 
-    leaving = [i for i in range(1, half) if 3.0 <= angles[i] <= 20.0]
-    returning = [i for i in range(half, len(frames)) if -20.0 <= angles[i] <= -3.0]
-    return vote(leaving) - vote(returning)
+    return vote(range(1, half)) - vote(range(len(frames) - 1, half - 1, -1))
 
 
 def background_stillness(frames: list[Image.Image], motion: str = "orbit") -> float:
