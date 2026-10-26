@@ -107,3 +107,21 @@ def test_hevc_encoder_prefers_free_x265(monkeypatch: pytest.MonkeyPatch) -> None
     )
     args = portrait.encoder_args("ffmpeg")
     assert args[:2] == ["-c:v", "libx265"] and "hev1" in args and "18" in args
+
+
+def test_gpu_claim_waits_for_go_and_releases_after_outer_session(tmp_path: Path) -> None:
+    request, go = tmp_path / "request.flag", tmp_path / "go.flag"
+    setup.save_config(gpu_request_flag=str(request), gpu_go_flag=str(go))
+    go.touch()  # the other pipeline has already paused
+    with setup.gpu_session():
+        with setup.gpu_session():
+            setup.claim_gpu(timeout=5)
+            assert request.exists()
+        assert request.exists()  # still held: the outer session (a batch) is open
+    assert not request.exists()
+
+
+def test_gpu_claim_is_skipped_without_configured_flags(tmp_path: Path) -> None:
+    with setup.gpu_session():
+        setup.claim_gpu(timeout=1)
+    assert list(tmp_path.glob("*.flag")) == []

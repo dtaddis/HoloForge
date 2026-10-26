@@ -42,7 +42,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     orbit = parser.add_argument_group("H3 orbit")
     orbit.add_argument("--motion", choices=MOTION_PROMPTS, default="orbit")
-    orbit.add_argument("--sweep", type=float, help="Degrees of orbit across the quilt (default 40, the Portrait's view cone)")
+    orbit.add_argument(
+        "--sweep",
+        type=float,
+        help="Degrees of orbit across the quilt (default 40, the Portrait's view cone)",
+    )
+    orbit.add_argument(
+        "--angle-calibration",
+        type=float,
+        help="Real orbit degrees per timed degree (default 1.1; raise if views over-rotate)",
+    )
     orbit.add_argument("--subject", default=None, help="Who/what is in the photo, for the prompt")
     orbit.add_argument("--style", default=None, help="e.g. 'Vintage film photograph'")
     orbit.add_argument(
@@ -109,6 +118,8 @@ def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
     )
     if args.sweep is not None:
         cfg = replace(cfg, sweep_degrees=args.sweep)
+    if args.angle_calibration is not None:
+        cfg = replace(cfg, angle_calibration=args.angle_calibration)
     if args.no_flat_retry:
         cfg = replace(cfg, flat_retry=False)
     settings = OrbitSettings(
@@ -154,25 +165,29 @@ def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
 
     failures: list[tuple[Path, str]] = []
     pushed: list[tuple[str, Path]] = []
-    for number, image in enumerate(images, 1):
-        print(f"=== {number}/{len(images)}: {image}", flush=True)
-        try:
-            result = pipeline.convert(image, progress, orbit=per_image.get(image))
-            for warning in result.warnings:
-                print(f"Warning: {warning}")
-            print(f"Quilt: {result.quilt_path.resolve()}")
-            print(f"Preview: {result.wiggle_path.resolve()}")
-            print(f"Elapsed: {result.elapsed_seconds:.1f}s")
-            if args.push and result.recording_path:
-                entry = (result.quilt_path.name, result.recording_path)
-                push_recordings(Path(device), [entry])
-                pushed.append(entry)
-                # Keep the batch's own order at the front of the playlist.
-                push_recordings(Path(device), pushed, copy=False)
-                print(f"Pushed to Portrait: {result.recording_path.name}", flush=True)
-        except Exception as exc:  # noqa: BLE001 - keep a long batch going past one bad photo
-            failures.append((image, str(exc)))
-            print(f"FAILED: {exc}", flush=True)
+    from .setup import gpu_session
+
+    # Hold any GPU claim for the whole batch rather than handing it back between photos.
+    with gpu_session():
+        for number, image in enumerate(images, 1):
+            print(f"=== {number}/{len(images)}: {image}", flush=True)
+            try:
+                result = pipeline.convert(image, progress, orbit=per_image.get(image))
+                for warning in result.warnings:
+                    print(f"Warning: {warning}")
+                print(f"Quilt: {result.quilt_path.resolve()}")
+                print(f"Preview: {result.wiggle_path.resolve()}")
+                print(f"Elapsed: {result.elapsed_seconds:.1f}s")
+                if args.push and result.recording_path:
+                    entry = (result.quilt_path.name, result.recording_path)
+                    push_recordings(Path(device), [entry])
+                    pushed.append(entry)
+                    # Keep the batch's own order at the front of the playlist.
+                    push_recordings(Path(device), pushed, copy=False)
+                    print(f"Pushed to Portrait: {result.recording_path.name}", flush=True)
+            except Exception as exc:  # noqa: BLE001 - keep a long batch going past one bad photo
+                failures.append((image, str(exc)))
+                print(f"FAILED: {exc}", flush=True)
     if failures:
         print(f"{len(failures)} of {len(images)} photos failed:")
         for image, message in failures:

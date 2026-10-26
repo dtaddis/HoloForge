@@ -311,10 +311,38 @@ def generate_orbit(
     if cached is not None:
         return cached, signature
 
-    from .setup import start_comfyui_if_needed
+    from .setup import claim_gpu, gpu_session, start_comfyui_if_needed
 
-    # Start the ComfyUI that holoforge-setup recorded, if nothing is listening yet.
-    start_comfyui_if_needed(settings.server)
+    with gpu_session():
+        claim_gpu()
+        # Start the ComfyUI that holoforge-setup recorded, if nothing is listening yet.
+        start_comfyui_if_needed(settings.server)
+        frames = _render(source, conditioning, settings, prompt, width, height, length, name,
+                         on_wait, on_busy)  # fmt: skip
+    for stale in directory.glob("frame_*.png"):
+        stale.unlink()
+    save_frames(frames, directory)
+    conditioning.save(directory / "conditioning.png")
+    (directory / "orbit.json").write_text(
+        json.dumps({"signature": signature, "frame_count": len(frames)}, indent=2),
+        encoding="utf-8",
+    )
+    return frames, signature
+
+
+def _render(
+    source: Image.Image,
+    conditioning: Image.Image,
+    settings: OrbitSettings,
+    prompt: str,
+    width: int,
+    height: int,
+    length: int,
+    name: str,
+    on_wait: Callable[[float], None] | None,
+    on_busy: Callable[[float], None] | None,
+) -> list[Image.Image]:
+    """Submit one H3 orbit to ComfyUI and return its frames."""
     client = ComfyClient(settings.server)
     unet_class = _unet_loader(settings.unet_name)["class_type"]
     clip_class = _clip_class(settings.clip_name)
@@ -329,14 +357,4 @@ def generate_orbit(
     graph = build_graph(image_name, width, height, length, prompt, settings, f"holoforge/{name}")
     prompt_id = client.queue(graph)
     outputs = client.wait(prompt_id, on_wait=on_wait)
-    frames = client.fetch_images(outputs, SAVE_NODE)
-
-    for stale in directory.glob("frame_*.png"):
-        stale.unlink()
-    save_frames(frames, directory)
-    conditioning.save(directory / "conditioning.png")
-    (directory / "orbit.json").write_text(
-        json.dumps({"signature": signature, "frame_count": len(frames)}, indent=2),
-        encoding="utf-8",
-    )
-    return frames, signature
+    return client.fetch_images(outputs, SAVE_NODE)

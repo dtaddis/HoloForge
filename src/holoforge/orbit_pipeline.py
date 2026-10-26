@@ -17,8 +17,15 @@ from .image_utils import load_rgb, prepare_frame, safe_stem
 from .orbit import OrbitSettings, generate_orbit
 from .portrait import Calibration, find_portrait_drive, prepare_recording
 from .quilt import QuiltWriter, quilt_filename, save_wiggle
+from .setup import gpu_session
 from .video import orbit_video_path, save_frames_video
-from .views import background_stillness, draw_parallax_plot, plan_views, render_views
+from .views import (
+    background_stillness,
+    camera_turn_rate,
+    draw_parallax_plot,
+    plan_views,
+    render_views,
+)
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -81,6 +88,17 @@ class OrbitPipeline:
         *,
         orbit: OrbitSettings | None = None,
     ) -> OrbitResult:
+        # One GPU claim covers a photo's render and any re-render.
+        with gpu_session():
+            return self._convert(input_path, progress, orbit=orbit)
+
+    def _convert(
+        self,
+        input_path: str | Path,
+        progress: ProgressCallback | None = None,
+        *,
+        orbit: OrbitSettings | None = None,
+    ) -> OrbitResult:
         started = time.perf_counter()
         cfg = self.config
         orbit = orbit or self.orbit
@@ -113,20 +131,32 @@ class OrbitPipeline:
         frames, orbit_meta = generate_orbit(
             source, run_dir / "orbit", orbit, name=stem, on_wait=waiting, on_busy=busy
         )
-        stillness = background_stillness(frames, orbit.motion)
-        attempts = [{"directory": "orbit", "motion": orbit.motion, "stillness": stillness}]
+
+        def assess(clip: list[Image.Image], settings: OrbitSettings, directory: str) -> dict:
+            still = background_stillness(clip, settings.motion)
+            turn = camera_turn_rate(clip, settings.motion) if settings.lora else None
+            problem = None
+            if still > cfg.flat_threshold:
+                problem = (
+                    f"H3 turned the subjects instead of the camera ({still:.0%} of the scene "
+                    "stayed still): the background will look flat"
+                )
+            elif turn is not None and turn < cfg.min_turn_rate:
+                problem = (
+                    "H3 animated the subjects instead of moving the camera (the viewpoint "
+                    f"barely turns: {turn:.2f} of the expected rate)"
+                )
+            return {"directory": directory, "motion": settings.motion, "stillness": still,
+                    "turn_rate": turn, "problem": problem}  # fmt: skip
+
+        attempts = [assess(frames, orbit, "orbit")]
         if (
             cfg.flat_retry
-            and stillness > cfg.flat_threshold
+            and attempts[0]["problem"]
             and orbit.prompt is None
             and orbit.motion in ("orbit", "orbit_camera")
         ):
-            self._notify(
-                progress,
-                0.40,
-                f"H3 turned the subjects instead of the camera ({stillness:.0%} of the scene "
-                "stayed still); re-rendering as a camera orbit",
-            )
+            self._notify(progress, 0.40, attempts[0]["problem"] + "; re-rendering with a new seed")
             # With the orbit LoRA the prompt is fixed, so only the seed changes.
             retry = replace(
                 orbit,
@@ -136,20 +166,18 @@ class OrbitPipeline:
             retry_frames, retry_meta = generate_orbit(
                 source, run_dir / "orbit_retry", retry, name=f"{stem}_retry", on_wait=waiting
             )
-            retry_stillness = background_stillness(retry_frames, retry.motion)
-            attempts.append(
-                {"directory": "orbit_retry", "motion": retry.motion, "stillness": retry_stillness}
-            )
-            if retry_stillness < stillness:
-                frames, orbit_meta, orbit, stillness = (
-                    retry_frames,
-                    retry_meta,
-                    retry,
-                    retry_stillness,
-                )
+            attempts.append(assess(retry_frames, retry, "orbit_retry"))
+            first, second = attempts
+
+            def badness(attempt: dict) -> tuple:
+                return (attempt["problem"] is not None, attempt["stillness"])
+
+            if badness(second) < badness(first):
+                frames, orbit_meta, orbit = retry_frames, retry_meta, retry
+        chosen = min(attempts, key=lambda a: (a["problem"] is not None, a["stillness"]))
+        stillness = chosen["stillness"]
 
         # Keep every generated clip as a viewable MP4 (frames are overwritten on re-render).
-        chosen = attempts[-1] if attempts[-1]["stillness"] == stillness else attempts[0]
         chosen_video = None
         for attempt in attempts:
             video = orbit_video_path(run_dir, attempt["directory"], bool(orbit.lora))
@@ -173,12 +201,10 @@ class OrbitPipeline:
             cfg.sweep_degrees,
             orbit.motion,
             constant_speed=bool(orbit.lora),
+            angle_scale=cfg.angle_calibration if orbit.lora else 1.0,
         )
-        if stillness > cfg.flat_threshold:
-            plan.warnings.append(
-                f"{stillness:.0%} of the scene stays still as the view turns: the background "
-                "will look flat"
-            )
+        if chosen["problem"]:
+            plan.warnings.append(chosen["problem"])
         draw_parallax_plot(plan, len(frames)).save(run_dir / "parallax.png")
         parallax_plot_path = run_dir / "parallax.png"
 

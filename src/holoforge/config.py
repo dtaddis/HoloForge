@@ -39,10 +39,17 @@ class OrbitConfig:
     # view cone (40 degrees on the Portrait, from its calibration) is orthoscopic: the scene
     # turns exactly as far as the viewer's eye moves.
     sweep_degrees: float = 40.0
+    # Real orbit angle per timed degree. The LoRA's 360-degree timing runs about 10% short:
+    # viewed on a Looking Glass Portrait, a 40-degree quilt timed at 1.0 turned ~10% further
+    # than the eye moves, so 1.1 makes the default sweep orthoscopic.
+    angle_calibration: float = 1.1
     # Re-render once with camera-insistent wording when H3 makes a turntable clip (subjects
     # rotate in front of a frozen background); keep whichever clip has more real parallax.
     flat_retry: bool = True
     flat_threshold: float = 0.4
+    # Below this camera_turn_rate the subjects moved rather than the camera (measured ~0.04 for
+    # such a clip against 0.3-1.5 for real orbits); also triggers the one re-render.
+    min_turn_rate: float = 0.15
     fill_mode: str = "ambient"
     output_dir: Path = Path("outputs")
     output_format: str = "jpg"

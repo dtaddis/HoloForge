@@ -10,6 +10,8 @@ start ComfyUI on demand and find ffmpeg.
 from __future__ import annotations
 
 import argparse
+import atexit
+import contextlib
 import json
 import os
 import shutil
@@ -268,6 +270,57 @@ def comfy_status(url: str = DEFAULT_COMFY_URL) -> str:
     if config.get("comfy_dir") and config.get("comfy_python"):
         return f"ComfyUI isn't running; HoloForge will start it from {config['comfy_dir']}."
     return "ComfyUI isn't set up yet: run `uv run holoforge-setup` (or rerun the installer)."
+
+
+# --- sharing the GPU with another pipeline ------------------------------------------------
+#
+# Optional. With ``gpu_request_flag`` and ``gpu_go_flag`` set in the config, HoloForge creates
+# the request file before it renders, waits for the other pipeline to write the go file (once
+# it has paused and freed the GPU), and deletes the request file when done.
+
+
+class _GpuClaim:
+    depth = 0
+    held = False
+
+
+def _release_gpu() -> None:
+    flag = load_config().get("gpu_request_flag")
+    if _GpuClaim.held and flag:
+        Path(flag).unlink(missing_ok=True)
+        print("Released the GPU", flush=True)
+    _GpuClaim.held = False
+
+
+@contextlib.contextmanager
+def gpu_session():
+    """Hold any GPU claim made inside until the outermost session ends."""
+    _GpuClaim.depth += 1
+    try:
+        yield
+    finally:
+        _GpuClaim.depth -= 1
+        if _GpuClaim.depth == 0:
+            _release_gpu()
+
+
+def claim_gpu(timeout: float = 600.0) -> None:
+    """Ask the configured pipeline for the GPU and wait until it hands it over."""
+    config = load_config()
+    request, go = config.get("gpu_request_flag"), config.get("gpu_go_flag")
+    if not request or not go or _GpuClaim.held:
+        return
+    Path(request).parent.mkdir(parents=True, exist_ok=True)
+    Path(request).touch()
+    _GpuClaim.held = True
+    atexit.register(_release_gpu)
+    print("Waiting for the GPU to be handed over...", flush=True)
+    deadline = time.monotonic() + timeout
+    while not Path(go).exists():
+        if time.monotonic() > deadline:
+            _release_gpu()
+            raise TimeoutError(f"No go signal ({go}) within {timeout:.0f} s")
+        time.sleep(2)
 
 
 # --- command line --------------------------------------------------------------------------

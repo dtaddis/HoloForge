@@ -190,6 +190,26 @@ class ViewpointSide:
         return float(-centre[0]), yaw, int(inliers)
 
 
+def camera_turn_rate(frames: list[Image.Image], motion: str = "orbit") -> float | None:
+    """How much the camera really turns, relative to the timed orbit, near the photo.
+
+    About 0.3-1.5 for a camera orbit (the scale depends on the unknown focal length). Near
+    zero when H3 animated the subjects (a horse finishing its jump, say) instead of moving
+    the camera: the frames change, so the timing advances, but the viewpoint does not.
+    None when too few frames can be measured.
+    """
+    angles = progress_angles(paced_steps(motion_steps(frames)), motion)
+    meter = ViewpointSide(frames[0])
+    half = len(frames) // 2
+    ratios = []
+    for indices in (range(1, half), range(half, len(frames))):
+        for i in [j for j in indices if 6.0 <= abs(angles[j]) <= 14.0][::2][:4]:
+            _, yaw, inliers = meter.measure_pose(frames[i])
+            if inliers:
+                ratios.append(abs(yaw) / abs(angles[i]))
+    return float(np.median(ratios)) if len(ratios) >= 3 else None
+
+
 def side_balance(
     frames: list[Image.Image], angles: np.ndarray, *, low: float = 3.0, high: float = 14.0
 ) -> tuple[float, float]:
@@ -285,12 +305,14 @@ def plan_views(
     motion: str = "orbit",
     *,
     constant_speed: bool = False,
+    angle_scale: float = 1.0,
 ) -> ViewPlan:
     """Choose a source (or flow blend of two) for each quilt view, leftmost camera first.
 
     sweep_degrees is the total viewing angle the quilt spans. constant_speed is for orbit-LoRA
     clips, trained on constant-speed renders: frames count evenly while the camera cruises
     and not at all while it pauses (see paced_steps), instead of by raw flow magnitude.
+    angle_scale converts those timed angles to real ones (see OrbitConfig.angle_calibration).
     """
     if len(frames) < 3:
         raise ValueError("An orbit needs at least three frames")
@@ -301,8 +323,8 @@ def plan_views(
         balance = side_balance(frames, angles)
         half_index = len(frames) // 2
         angles = angles.copy()
-        angles[:half_index] *= balance[0]
-        angles[half_index:] *= balance[1]
+        angles[:half_index] *= balance[0] * angle_scale
+        angles[half_index:] *= balance[1] * angle_scale
     score = direction_score(frames, angles)
     sign = 1.0 if score >= 0 else -1.0
     warnings: list[str] = []

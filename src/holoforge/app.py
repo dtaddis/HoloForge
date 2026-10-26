@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from dataclasses import replace
 from pathlib import Path
 
@@ -221,8 +222,20 @@ def build_ui() -> gr.Blocks:
     return demo
 
 
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 def main() -> None:
-    build_ui().launch(inbrowser=True)
+    demo = build_ui()
+    try:
+        demo.launch(inbrowser=True)
+    except OSError:
+        # Gradio tries 7860-7959, which Windows sometimes reserves wholesale (Hyper-V/WSL
+        # excluded port ranges); any port the OS hands out works just as well.
+        demo.launch(inbrowser=True, server_port=free_port())
 
 
 if __name__ == "__main__":
