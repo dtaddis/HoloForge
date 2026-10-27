@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import socket
 from dataclasses import replace
 from pathlib import Path
@@ -51,6 +52,7 @@ def convert_orbit(
     seed: int,
     prompt: str | None,
     report,
+    output_dir: Path = Path("outputs"),
 ):
     from .orbit_pipeline import OrbitPipeline
     from .portrait import Calibration, find_portrait_drive, push_recordings
@@ -63,7 +65,7 @@ def convert_orbit(
         preset=PRESETS[preset_name],
         sweep_degrees=float(sweep),
         fill_mode=layout,
-        output_dir=Path("outputs"),
+        output_dir=output_dir,
         portrait_recording=calibration is not None,
     )
     settings = OrbitSettings(
@@ -122,6 +124,7 @@ def convert_from_ui(
     seed: int,
     prompt: str | None,
     progress=DEFAULT_PROGRESS,
+    output_dir: Path = Path("outputs"),
 ):
     if not image_path:
         raise gr.Error("Choose a photograph first.")
@@ -132,7 +135,7 @@ def convert_from_ui(
     try:
         return convert_orbit(
             image_path, preset_name, layout, sweep, use_lora, steps, pdd,
-            comfy_url, push, seed, prompt, report,
+            comfy_url, push, seed, prompt, report, output_dir,
         )  # fmt: skip
     except gr.Error:
         raise
@@ -140,7 +143,10 @@ def convert_from_ui(
         raise gr.Error(str(exc)) from exc
 
 
-def build_ui() -> gr.Blocks:
+def build_ui(output_dir: Path = Path("outputs")) -> gr.Blocks:
+    def convert(*inputs, progress=DEFAULT_PROGRESS):
+        return convert_from_ui(*inputs, progress=progress, output_dir=output_dir)
+
     with gr.Blocks(title="HoloForge") as demo:
         gr.Markdown(
             """
@@ -207,7 +213,7 @@ def build_ui() -> gr.Blocks:
                 metadata = gr.File(label="Conversion settings")
 
         run.click(
-            convert_from_ui,
+            convert,
             inputs=[
                 image, preset, layout, sweep, use_lora, steps, pdd, comfy_url, push,
                 seed, prompt,
@@ -228,8 +234,16 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def main() -> None:
-    demo = build_ui()
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="HoloForge web app")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("outputs"),
+        help="folder for results; point it at an earlier batch's folder to reuse its H3 clips",
+    )
+    args = parser.parse_args(argv)
+    demo = build_ui(args.output)
     try:
         demo.launch(inbrowser=True)
     except OSError:

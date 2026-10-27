@@ -59,8 +59,7 @@ On Windows, in PowerShell in the cloned repository:
 
 ```powershell
 .\install.ps1
-.
-un.ps1
+.\run.ps1
 ```
 
 On Linux or macOS, install [`uv`](https://docs.astral.sh/uv/) and ffmpeg (`brew install ffmpeg`
@@ -79,7 +78,7 @@ rendering setup, `holoforge-setup`, which you can also run later with `uv run ho
    downloads the four files below from Hugging Face into ComfyUI's `models` folders, about
    34 GB in total.
 3. **ffmpeg.** On Windows it downloads the free [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-   build into `toolsfmpeg`; elsewhere it uses the ffmpeg on your PATH.
+   build into `tools\ffmpeg`; elsewhere it uses the ffmpeg on your PATH.
 
 | folder | file | source |
 |---|---|---|
@@ -112,6 +111,9 @@ press **Forge hologram**. The page shows the generated orbit video, a parallax p
 measured viewing angles, the quilt and, with a Portrait connected, its playback video, which
 is also added to the device's playlist. The address is printed in the terminal; it is usually
 `http://127.0.0.1:7860`, or another free port when Windows has reserved that range.
+`--output` picks the results folder (default `outputs`); pointing it at the folder of an
+earlier command-line batch reuses that batch's H3 clips, so a photo it has already
+rendered (with the same seed and settings) is ready in about a minute.
 
 ### Command line
 
