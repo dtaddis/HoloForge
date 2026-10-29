@@ -157,8 +157,12 @@ def encoder_args(ffmpeg: str) -> list[str]:
         # CRF 18 keeps the subpixel lenticular pattern at least as faithfully as Looking Glass
         # Studio's kvazaar encode (measured 25.46 vs 25.30 dB PSNR; the 4:2:0 chroma that every
         # Portrait recording uses sets the ceiling), in a smaller file. hev1 tagging as Studio.
+        # The VBV cap keeps every frame under ~1.9 MB: the Portrait shows green for videos whose
+        # first frame is ~2.5 MB or more (Studio's own stay near 2 MB), and later frames restore
+        # the detail the cap costs the first one.
         return ["-c:v", "libx265", "-preset", "fast", "-crf", "18", "-tag:v", "hev1",
-                "-x265-params", "log-level=error"]  # fmt: skip
+                "-x265-params",
+                "log-level=error:vbv-bufsize=16000:vbv-maxrate=16000:vbv-init=0.95"]  # fmt: skip
     if "libkvazaar" in listing:
         return ["-c:v", "libkvazaar", "-kvazaar-params", "preset=fast"]
     raise RuntimeError(f"{ffmpeg} has no HEVC encoder (libx265); install a full ffmpeg build")
