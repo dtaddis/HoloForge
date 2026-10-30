@@ -2,7 +2,9 @@ import os
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from holoforge import portrait, setup
 
@@ -107,6 +109,32 @@ def test_hevc_encoder_prefers_free_x265(monkeypatch: pytest.MonkeyPatch) -> None
     )
     args = portrait.encoder_args("ffmpeg")
     assert args[:2] == ["-c:v", "libx265"] and "hev1" in args and "18" in args
+
+
+def test_portrait_recording_frames_stay_under_1mb(tmp_path: Path) -> None:
+    try:
+        ffmpeg = portrait.find_ffmpeg()
+    except FileNotFoundError:
+        pytest.skip("no ffmpeg")
+    ffprobe = Path(ffmpeg).with_name(Path(ffmpeg).name.replace("ffmpeg", "ffprobe"))
+    if (
+        not ffprobe.exists()
+        or "libx265"
+        not in subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False
+        ).stdout
+    ):
+        pytest.skip("no ffprobe or libx265")
+    # Noise is the hardest frame to compress; the Portrait shows green for frames over ~1 MB.
+    noise = np.random.default_rng(0).integers(0, 256, (2048, 3072, 3), dtype=np.uint8)
+    recording = portrait.encode_still(Image.fromarray(noise), tmp_path / "noise.mp4", ffmpeg)
+    sizes = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "frame=pkt_size", "-of", "csv=p=0", recording],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert max(int(s.strip(",")) for s in sizes if s.strip(",")) <= 1_000_000
 
 
 def test_gpu_claim_waits_for_go_and_releases_after_outer_session(tmp_path: Path) -> None:
