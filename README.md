@@ -163,7 +163,7 @@ drive. HoloForge does the same itself:
 - it reproduces Studio 1.7's `quilt_to_lent` shader and the values Studio logs for it;
 - it encodes HEVC with the free x265 encoder, at a quality setting measured to keep the
   lenticular pattern at least as faithfully as Studio's own encoder,
-  with every frame kept under about 1.9 MB (the Portrait shows green for larger ones).
+  with the first frame kept near 1 MB (the Portrait shows green for some larger ones).
 
 Looking Glass Studio is not needed.
 
