@@ -54,6 +54,9 @@ class OrbitConfig:
     output_dir: Path = Path("outputs")
     output_format: str = "jpg"
     portrait_recording: bool = True
+    # False skips the quilt and Portrait video (orbit only, for anyone without a Looking Glass):
+    # the views are saved as images at the clip's own framing, with a look-around video.
+    looking_glass: bool = True
 
     def with_preset_overrides(
         self,

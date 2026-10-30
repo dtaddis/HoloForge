@@ -25,8 +25,9 @@ def expand_inputs(paths: list[Path]) -> list[Path]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="holoforge",
-        description="Convert 2D photos into Looking Glass holograms with MiniMax H3 camera "
-        "orbits rendered in a local ComfyUI.",
+        description="Convert 2D photos into Looking Glass holograms (or, with --orbit-only, "
+        "look-around videos and view images) with MiniMax H3 camera orbits rendered in a "
+        "local ComfyUI.",
     )
     parser.add_argument("inputs", type=Path, nargs="+", help="Photos or folders of photos")
     parser.add_argument("--output", type=Path, default=Path("outputs"))
@@ -39,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quilt-size", type=int)
     parser.add_argument("--aspect", type=float)
     parser.add_argument("--png", action="store_true", help="Write lossless PNG instead of JPEG")
+    parser.add_argument(
+        "--orbit-only",
+        action="store_true",
+        help="No Looking Glass output: save the orbit video, each view as an image and a "
+        "look-around video (for anyone without a Looking Glass)",
+    )
 
     orbit = parser.add_argument_group("H3 orbit")
     orbit.add_argument("--motion", choices=MOTION_PROMPTS, default="orbit")
@@ -100,7 +107,9 @@ def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
     from .orbit_pipeline import OrbitPipeline
     from .portrait import Calibration, find_portrait_drive, push_recordings
 
-    device = args.device or find_portrait_drive()
+    if args.orbit_only and args.push:
+        sys.exit("--orbit-only makes no Looking Glass output, so there is nothing to --push")
+    device = None if args.orbit_only else args.device or find_portrait_drive()
     if args.push and device is None:
         sys.exit("--push: no Looking Glass Portrait drive found; connect it or pass --device")
     calibration = None
@@ -113,6 +122,7 @@ def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
         output_dir=args.output,
         output_format="png" if args.png else "jpg",
         portrait_recording=calibration is not None,
+        looking_glass=not args.orbit_only,
     ).with_preset_overrides(
         columns=args.columns, rows=args.rows, quilt_size=args.quilt_size, aspect=args.aspect
     )
@@ -175,7 +185,16 @@ def run_orbit(args: argparse.Namespace, images: list[Path]) -> None:
                 result = pipeline.convert(image, progress, orbit=per_image.get(image))
                 for warning in result.warnings:
                     print(f"Warning: {warning}")
-                print(f"Quilt: {result.quilt_path.resolve()}")
+                if result.quilt_path:
+                    print(f"Quilt: {result.quilt_path.resolve()}")
+                if result.orbit_video_path:
+                    print(f"Orbit video: {result.orbit_video_path.resolve()}")
+                if result.view_paths:
+                    print(
+                        f"Views: {len(result.view_paths)} in {result.view_paths[0].parent.resolve()}"
+                    )
+                if result.sweep_video_path:
+                    print(f"Look-around video: {result.sweep_video_path.resolve()}")
                 print(f"Preview: {result.wiggle_path.resolve()}")
                 print(f"Elapsed: {result.elapsed_seconds:.1f}s")
                 if args.push and result.recording_path:

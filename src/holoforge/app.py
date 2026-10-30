@@ -51,13 +51,14 @@ def convert_orbit(
     push: bool,
     seed: int,
     prompt: str | None,
+    looking_glass: bool,
     report,
     output_dir: Path = Path("outputs"),
 ):
     from .orbit_pipeline import OrbitPipeline
     from .portrait import Calibration, find_portrait_drive, push_recordings
 
-    device = find_portrait_drive()
+    device = find_portrait_drive() if looking_glass else None
     calibration = (
         Calibration.from_file(device / "LKG_calibration" / "visual.json") if device else None
     )
@@ -67,6 +68,7 @@ def convert_orbit(
         fill_mode=layout,
         output_dir=output_dir,
         portrait_recording=calibration is not None,
+        looking_glass=looking_glass,
     )
     settings = OrbitSettings(
         lora=ORBIT_LORA if use_lora else None,
@@ -91,20 +93,28 @@ def convert_orbit(
     result = pipeline.convert(image_path, report, orbit=settings)
     notes = [f"Finished in {result.elapsed_seconds / 60:.1f} minutes."]
     notes += [f"⚠️ {warning}" for warning in result.warnings]
-    if push and result.recording_path and device is not None:
-        push_recordings(device, [(result.quilt_path.name, result.recording_path)])
+    if result.view_paths:
         notes.append(
-            f"Added to the Portrait at {device}. Eject it and power it from USB-C alone to "
-            "play the playlist in standalone mode."
+            f"Saved {len(result.view_paths)} views in {result.view_paths[0].parent} and a "
+            "look-around video."
         )
-    elif push:
-        notes.append("Not added to a Portrait: none is connected.")
+    if push and looking_glass:
+        if result.quilt_path and result.recording_path and device is not None:
+            push_recordings(device, [(result.quilt_path.name, result.recording_path)])
+            notes.append(
+                f"Added to the Portrait at {device}. Eject it and power it from USB-C alone to "
+                "play the playlist in standalone mode."
+            )
+        else:
+            notes.append("Not added to a Portrait: none is connected.")
     return (
         str(result.orbit_video_path) if result.orbit_video_path else None,
         str(result.wiggle_path),
         str(result.centre_view_path),
         str(result.parallax_plot_path),
-        str(result.quilt_path),
+        str(result.sweep_video_path) if result.sweep_video_path else None,
+        [str(p) for p in result.view_paths] or None,
+        str(result.quilt_path) if result.quilt_path else None,
         str(result.recording_path) if result.recording_path else None,
         str(result.metadata_path),
         "\n\n".join(notes),
@@ -123,6 +133,7 @@ def convert_from_ui(
     push: bool,
     seed: int,
     prompt: str | None,
+    looking_glass: bool = True,
     progress=DEFAULT_PROGRESS,
     output_dir: Path = Path("outputs"),
 ):
@@ -135,7 +146,7 @@ def convert_from_ui(
     try:
         return convert_orbit(
             image_path, preset_name, layout, sweep, use_lora, steps, pdd,
-            comfy_url, push, seed, prompt, report, output_dir,
+            comfy_url, push, seed, prompt, looking_glass, report, output_dir,
         )  # fmt: skip
     except gr.Error:
         raise
@@ -155,7 +166,8 @@ def build_ui(output_dir: Path = Path("outputs")) -> gr.Blocks:
             (running in your local ComfyUI) to fly a camera round the frozen scene,
             starting and ending on the photograph, then builds the quilt from the views either
             side of it. With a Looking Glass Portrait connected by USB, the result is added to
-            its standalone playlist.
+            its standalone playlist. No Looking Glass? Untick **Looking Glass output** to get
+            the orbit video, the views as images and a look-around video instead.
             """
         )
         with gr.Row():
@@ -184,6 +196,12 @@ def build_ui(output_dir: Path = Path("outputs")) -> gr.Blocks:
                         label="360° orbit LoRA",
                         info="Keeps the scene frozen so backgrounds get real parallax",
                     )
+                    looking_glass = gr.Checkbox(
+                        value=True,
+                        label="Looking Glass output",
+                        info="Off: just the orbit video, each view as an image and a "
+                        "look-around video",
+                    )
                     push = gr.Checkbox(value=True, label="Add to the connected Portrait")
                     status_portrait = gr.Markdown(portrait_status())
                     status_comfy = gr.Markdown(comfy_status_line())
@@ -208,6 +226,8 @@ def build_ui(output_dir: Path = Path("outputs")) -> gr.Blocks:
                 wiggle = gr.Image(label="Parallax preview", type="filepath")
                 centre = gr.Image(label="Centre view", type="filepath")
                 diagnostic = gr.Image(label="Viewing angles", type="filepath")
+                sweep_video = gr.Video(label="Look-around video (orbit-only)")
+                views = gr.Gallery(label="Views, left to right (orbit-only)", columns=8)
                 quilt = gr.File(label="Quilt")
                 recording = gr.File(label="Portrait recording (__lkgrec.mp4)")
                 metadata = gr.File(label="Conversion settings")
@@ -216,9 +236,12 @@ def build_ui(output_dir: Path = Path("outputs")) -> gr.Blocks:
             convert,
             inputs=[
                 image, preset, layout, sweep, use_lora, steps, pdd, comfy_url, push,
-                seed, prompt,
+                seed, prompt, looking_glass,
             ],
-            outputs=[orbit_video, wiggle, centre, diagnostic, quilt, recording, metadata, status],
+            outputs=[
+                orbit_video, wiggle, centre, diagnostic, sweep_video, views, quilt, recording,
+                metadata, status,
+            ],
         ).then(portrait_status, outputs=status_portrait).then(
             comfy_status_line, inputs=comfy_url, outputs=status_comfy
         )  # fmt: skip

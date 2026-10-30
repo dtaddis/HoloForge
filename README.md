@@ -5,7 +5,8 @@ PC. It asks the [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) video 
 running in your local ComfyUI, to fly a camera round the frozen moment in the photo, then
 builds the quilt from real views of the scene from either side, rather than warping a flat
 photo over a depth map. With a Looking Glass Portrait plugged in, results go straight onto
-its standalone playlist.
+its standalone playlist. No Looking Glass? HoloForge can also just make the look-around orbit
+videos and an image of each view (see [Without a Looking Glass](#without-a-looking-glass)).
 
 This is an early working prototype, not an official Looking Glass Factory product.
 
@@ -62,6 +63,12 @@ On Windows, in PowerShell in the cloned repository:
 .\run.ps1
 ```
 
+After installing, `holoforge.bat` (Windows) runs HoloForge in its own environment from any
+folder, whatever Python you have installed globally: double-click it, or run it with no
+arguments, to open the web app; `holoforge.bat photo.jpg` converts on the command line;
+`holoforge.bat portrait ...` and `holoforge.bat setup ...` run the other tools. Anywhere below,
+`.\holoforge.bat` works in place of `uv run holoforge`.
+
 On Linux or macOS, install [`uv`](https://docs.astral.sh/uv/) and ffmpeg (`brew install ffmpeg`
 or `sudo apt install ffmpeg`), then run `./install.sh` and `./run.sh`.
 
@@ -106,10 +113,11 @@ for about 2.5x speed at some cost in fidelity.
 
 ### Web app
 
-`.\run.ps1` (or `uv run holoforge-ui`) opens HoloForge in your browser. Choose a photo and
+`.\run.ps1`, `holoforge.bat` or `uv run holoforge-ui` opens HoloForge in your browser. Choose a photo and
 press **Forge hologram**. The page shows the generated orbit video, a parallax preview, the
 measured viewing angles, the quilt and, with a Portrait connected, its playback video, which
-is also added to the device's playlist. The address is printed in the terminal; it is usually
+is also added to the device's playlist. Untick **Looking Glass output** for the orbit-only
+results instead (see below). The address is printed in the terminal; it is usually
 `http://127.0.0.1:7860`, or another free port when Windows has reserved that range.
 `--output` picks the results folder (default `outputs`); pointing it at the folder of an
 earlier command-line batch reuses that batch's H3 clips, so a photo it has already
@@ -122,6 +130,7 @@ uv run holoforge "photo.jpg"                     # quilt in outputs\photo\
 uv run holoforge "D:\Photos\Birthday" --push     # a whole folder, added to the Portrait
 uv run holoforge "photo.jpg" --sweep 30          # gentler than orthoscopic 3D
 uv run holoforge "photo.jpg" --preset lg16       # other Looking Glass displays
+uv run holoforge "photo.jpg" --orbit-only        # no Looking Glass needed (see below)
 ```
 
 Each photo gets a folder under `outputs/` with:
@@ -139,6 +148,21 @@ different `--sweep` or framing takes about a minute instead of another 15-minute
 HoloForge shares ComfyUI politely: on the command line, each H3 job waits until ComfyUI's
 queue has been empty for `--idle-seconds` (default 180), so another pipeline keeps the GPU
 while it is busy. Use `--idle-seconds 0` when the GPU is yours.
+
+### Without a Looking Glass
+
+`--orbit-only` (or unticking **Looking Glass output** in the web app) skips the quilt and the
+Portrait video. Each photo's folder then has:
+
+- `videos/`, the H3 orbit as an MP4;
+- `views/`, the 48 evenly spaced views as images, left to right (`*_view_00.jpg` onwards, or
+  PNG with `--png`), at the orbit's own framing rather than fitted to a display;
+- `*_sweep.mp4`, a look-around video that pans across the views and back, as moving your
+  head in front of a Looking Glass would;
+- the parallax preview GIF, centre view, `parallax.png` and `conversion.json` as usual.
+
+`--sweep` sets how far the views turn (default 40°), and `--columns` and `--rows` how many
+there are (columns × rows).
 
 ### Displays
 

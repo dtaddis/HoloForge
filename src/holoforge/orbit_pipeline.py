@@ -1,4 +1,7 @@
-"""Photograph -> MiniMax H3 orbit clip -> evenly spaced views -> quilt (-> Portrait recording)."""
+"""Photograph -> MiniMax H3 orbit clip -> evenly spaced views -> quilt (-> Portrait recording).
+
+With looking_glass off, the views are saved as images with a look-around video instead.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +9,7 @@ import json
 import math
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from PIL import Image
@@ -18,7 +21,7 @@ from .orbit import OrbitSettings, generate_orbit
 from .portrait import Calibration, find_portrait_drive, prepare_recording
 from .quilt import QuiltWriter, quilt_filename, save_wiggle
 from .setup import gpu_session
-from .video import orbit_video_path, save_frames_video
+from .video import orbit_video_path, save_frames_video, save_sweep_video
 from .views import (
     background_stillness,
     camera_turn_rate,
@@ -32,7 +35,7 @@ ProgressCallback = Callable[[float, str], None]
 
 @dataclass
 class OrbitResult:
-    quilt_path: Path
+    quilt_path: Path | None
     wiggle_path: Path
     centre_view_path: Path
     parallax_plot_path: Path
@@ -41,6 +44,9 @@ class OrbitResult:
     warnings: list[str]
     elapsed_seconds: float
     orbit_video_path: Path | None = None
+    # Orbit-only runs (looking_glass off): the view images, left to right, and their look-around video.
+    view_paths: list[Path] = field(default_factory=list)
+    sweep_video_path: Path | None = None
 
 
 class OrbitPipeline:
@@ -208,32 +214,55 @@ class OrbitPipeline:
         draw_parallax_plot(plan, len(frames)).save(run_dir / "parallax.png")
         parallax_plot_path = run_dir / "parallax.png"
 
-        self._notify(progress, 0.86, "Building views and quilt")
         views = render_views(frames, plan)
-        tile_size = (
-            math.ceil(cfg.preset.quilt_size / cfg.preset.columns),
-            math.ceil(cfg.preset.quilt_size / cfg.preset.rows),
-        )
-        writer = QuiltWriter(cfg.preset)
-        framed: list[Image.Image] = []
-        for index, view in enumerate(views):
-            tile, _ = prepare_frame(view, tile_size, cfg.fill_mode)
-            writer.add(index, tile)
-            framed.append(tile)
+        quilt_path = None
+        view_paths: list[Path] = []
+        sweep_video_path = None
+        if cfg.looking_glass:
+            self._notify(progress, 0.86, "Building views and quilt")
+            tile_size = (
+                math.ceil(cfg.preset.quilt_size / cfg.preset.columns),
+                math.ceil(cfg.preset.quilt_size / cfg.preset.rows),
+            )
+            writer = QuiltWriter(cfg.preset)
+            framed: list[Image.Image] = []
+            for index, view in enumerate(views):
+                tile, _ = prepare_frame(view, tile_size, cfg.fill_mode)
+                writer.add(index, tile)
+                framed.append(tile)
 
-        extension = ".jpg" if cfg.output_format.lower() in {"jpg", "jpeg"} else ".png"
-        quilt_path = run_dir / quilt_filename(stem, cfg.preset, extension)
-        if extension == ".jpg":
-            writer.canvas.save(quilt_path, quality=96, subsampling=0, optimize=False)
+            extension = ".jpg" if cfg.output_format.lower() in {"jpg", "jpeg"} else ".png"
+            quilt_path = run_dir / quilt_filename(stem, cfg.preset, extension)
+            if extension == ".jpg":
+                writer.canvas.save(quilt_path, quality=96, subsampling=0, optimize=False)
+            else:
+                writer.save(quilt_path)
         else:
-            writer.save(quilt_path)
+            self._notify(progress, 0.86, "Saving the views and a look-around video")
+            framed = views
+            views_dir = run_dir / "views"
+            views_dir.mkdir(exist_ok=True)
+            for old in views_dir.glob(f"{stem}_view_*"):
+                old.unlink()  # a different view count may have left extra files
+            extension = ".jpg" if cfg.output_format.lower() in {"jpg", "jpeg"} else ".png"
+            for index, view in enumerate(views):
+                path = views_dir / f"{stem}_view_{index:02d}{extension}"
+                if extension == ".jpg":
+                    view.save(path, quality=96, subsampling=0)
+                else:
+                    view.save(path, compress_level=2)
+                view_paths.append(path)
+            try:
+                sweep_video_path = save_sweep_video(views, run_dir / f"{stem}_sweep.mp4")
+            except (OSError, RuntimeError) as exc:
+                plan.warnings.append(f"No look-around video: {exc}")
         sample = [framed[round(i)] for i in _linspace(0, len(framed) - 1, min(12, len(framed)))]
         wiggle_path = save_wiggle(sample, run_dir / f"{stem}_wiggle.gif")
         centre_view_path = run_dir / f"{stem}_centre.png"
         framed[len(framed) // 2].save(centre_view_path)
 
         recording_path = None
-        calibration = self._calibration() if cfg.portrait_recording else None
+        calibration = self._calibration() if cfg.looking_glass and cfg.portrait_recording else None
         if calibration is not None:
             self._notify(progress, 0.92, "Interlacing for the Looking Glass Portrait")
             recording_path, _ = prepare_recording(
@@ -262,7 +291,9 @@ class OrbitPipeline:
                 "samples": [asdict(s) for s in plan.samples],
                 "views": [asdict(s) for s in plan.sources],
                 "warnings": plan.warnings,
-                "quilt": str(quilt_path.resolve()),
+                "quilt": str(quilt_path.resolve()) if quilt_path else None,
+                "view_images": [str(p.resolve()) for p in view_paths],
+                "sweep_video": str(sweep_video_path.resolve()) if sweep_video_path else None,
                 "recording": str(recording_path.resolve()) if recording_path else None,
                 "calibration": asdict(calibration) if calibration else None,
                 "elapsed_seconds": elapsed,
@@ -281,6 +312,8 @@ class OrbitPipeline:
             warnings=plan.warnings,
             elapsed_seconds=elapsed,
             orbit_video_path=chosen_video,
+            view_paths=view_paths,
+            sweep_video_path=sweep_video_path,
         )
 
 

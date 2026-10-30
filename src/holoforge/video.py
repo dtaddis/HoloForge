@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from pathlib import Path
+
+from PIL import Image
 
 from .portrait import find_ffmpeg
 
@@ -46,6 +49,15 @@ def save_frames_video(frames_dir: str | Path, path: str | Path, fps: float = 24.
             return path
         errors.append(f"{args[1]}: {result.stderr.strip()[-300:]}")
     raise RuntimeError("No working H.264 encoder in ffmpeg. " + " | ".join(errors))
+
+
+def save_sweep_video(views: list[Image.Image], path: str | Path, fps: float = 24.0) -> Path:
+    """Encode the views left to right and back again: the look-around a hologram shows."""
+    sequence = views + list(reversed(views[1:-1]))
+    with tempfile.TemporaryDirectory() as tmp:
+        for index, view in enumerate(sequence):
+            view.save(Path(tmp) / f"frame_{index:04d}.png", compress_level=1)
+        return save_frames_video(tmp, path, fps)
 
 
 def orbit_video_path(run_dir: Path, attempt_dir: str, lora: bool) -> Path:
