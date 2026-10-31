@@ -2,12 +2,19 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
+from holoforge import portrait
+from holoforge.cli import portrait_main
 from holoforge.portrait import (
     Calibration,
+    find_holograms,
+    playlist_names,
+    prepare_holograms,
     push_recordings,
     recording_name,
+    remove_from_playlist,
     render_lenticular,
     replace_playlist,
 )
@@ -114,3 +121,137 @@ def test_replace_playlist_keeps_only_the_given_recordings(tmp_path: Path) -> Non
     assert lines == [recording_name("b_qs8x6a0.75.jpg"), recording_name("a_qs8x6a0.75.jpg")]
     assert sorted(p.name for p in device.glob("*__lkgrec.mp4")) == sorted(lines)
     assert (device / "LKG_calibration" / "visual.json").exists()
+
+
+def make_device(tmp_path: Path, names: tuple[str, ...] = ()) -> Path:
+    device = tmp_path / "device"
+    (device / "LKG_calibration").mkdir(parents=True)
+    (device / "LKG_calibration" / "visual.json").write_text(json.dumps(VISUAL), encoding="utf-8")
+    for name in names:
+        (device / recording_name(name)).write_bytes(name.encode())
+    (device / "playlist.json").write_text(
+        json.dumps([{"filename": n, "last_updated": "never", "needs_sync": False} for n in names]),
+        encoding="utf-8",
+    )
+    (device / "playlist.m3u").write_text(
+        "".join(recording_name(n) + "\n" for n in names), encoding="utf-8"
+    )
+    return device
+
+
+@pytest.fixture
+def fake_render(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Stand in for interlacing and encoding; records which quilts were rendered."""
+    rendered: list[str] = []
+
+    def prepare_recording(quilt, columns, rows, aspect, calibration, output_dir):
+        rendered.append(Path(quilt).name)
+        recording = Path(output_dir) / recording_name(Path(quilt).name)
+        recording.write_bytes(b"rendered " + Path(quilt).name.encode())
+        return recording, None
+
+    monkeypatch.setattr(portrait, "prepare_recording", prepare_recording)
+    return rendered
+
+
+def test_find_holograms_pairs_quilts_with_recordings(tmp_path: Path) -> None:
+    run = tmp_path / "results" / "b"
+    run.mkdir(parents=True)
+    (run / "b_quilt_qs8x6a0.75.jpg").write_bytes(b"q")
+    (run / "b_quilt_qs8x6a0.75_lenticular.png").write_bytes(b"preview")
+    (run / recording_name("b_quilt_qs8x6a0.75.jpg")).write_bytes(b"r")
+    (run / "b_wiggle.gif").write_bytes(b"gif")
+    loose = tmp_path / recording_name("a_quilt_qs8x6a0.75.jpg")
+    loose.write_bytes(b"r")
+
+    items = find_holograms([tmp_path / "results", loose])
+
+    assert [item.name for item in items] == ["b_quilt_qs8x6a0.75.jpg", "a_quilt_qs8x6a0.75.jpg"]
+    assert items[0].quilt == run / "b_quilt_qs8x6a0.75.jpg"
+    assert items[0].recording == run / recording_name("b_quilt_qs8x6a0.75.jpg")
+    assert items[1].quilt is None and items[1].recording == loose
+    with pytest.raises(ValueError):
+        find_holograms([run / "b_wiggle.gif"])
+
+
+def test_ready_recordings_are_not_rendered_again(tmp_path: Path, fake_render: list[str]) -> None:
+    quilt = tmp_path / "a_quilt_qs8x6a0.75.jpg"
+    quilt.write_bytes(b"q")
+    ready = tmp_path / "b_quilt_qs8x6a0.75.jpg"
+    ready.write_bytes(b"q")
+    (tmp_path / recording_name(ready.name)).write_bytes(b"ready")
+    items = find_holograms([quilt, ready])
+
+    entries = prepare_holograms(items, calibration(tmp_path), report=lambda _: None)
+
+    assert fake_render == [quilt.name]
+    assert [path.read_bytes() for _, path in entries] == [
+        b"rendered " + quilt.name.encode(),
+        b"ready",
+    ]
+    prepare_holograms(items, calibration(tmp_path), rerender=True, report=lambda _: None)
+    assert fake_render == [quilt.name, quilt.name, ready.name]
+
+
+def test_recordings_for_another_portrait_are_rendered_again(
+    tmp_path: Path, fake_render: list[str]
+) -> None:
+    quilt = tmp_path / "a_quilt_qs8x6a0.75.jpg"
+    quilt.write_bytes(b"q")
+    recording = tmp_path / recording_name(quilt.name)
+    recording.write_bytes(b"old")
+    meta = {"recording": str(recording.resolve()), "calibration": {"serial": "LKG-PORT-00001"}}
+    (tmp_path / "conversion.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    prepare_holograms(find_holograms([quilt]), calibration(tmp_path), report=lambda _: None)
+
+    assert fake_render == [quilt.name]
+    meta = json.loads((tmp_path / "conversion.json").read_text(encoding="utf-8"))
+    assert meta["calibration"]["serial"] == VISUAL["serial"]
+    prepare_holograms(find_holograms([quilt]), calibration(tmp_path), report=lambda _: None)
+    assert fake_render == [quilt.name]
+
+
+def test_push_skips_identical_recordings_and_leaves_no_partial_files(tmp_path: Path) -> None:
+    device = make_device(tmp_path, ("a.jpg",))
+    same = tmp_path / "same.mp4"
+    same.write_bytes(b"a.jpg")
+    new = tmp_path / "new.mp4"
+    new.write_bytes(b"new")
+    before = (device / recording_name("a.jpg")).stat().st_mtime_ns
+
+    push_recordings(device, [("a.jpg", same), ("b.jpg", new)])
+
+    assert (device / recording_name("a.jpg")).stat().st_mtime_ns == before
+    assert (device / recording_name("b.jpg")).read_bytes() == b"new"
+    assert not list(device.glob("*.partial"))
+    assert playlist_names(device) == ["a.jpg", "b.jpg"]
+
+
+def test_remove_from_playlist(tmp_path: Path) -> None:
+    device = make_device(tmp_path, ("a.jpg", "b.jpg", "c.jpg"))
+
+    removed = remove_from_playlist(device, ["b.jpg", recording_name("c.jpg"), "zzz.jpg"])
+
+    assert removed == ["b.jpg", "c.jpg"]
+    assert playlist_names(device) == ["a.jpg"]
+    lines = (device / "playlist.m3u").read_text(encoding="utf-8").split()
+    assert lines == [recording_name("a.jpg")]
+    assert sorted(p.name for p in device.glob("*__lkgrec.mp4")) == [recording_name("a.jpg")]
+
+
+def test_portrait_command_copies_a_results_folder(
+    tmp_path: Path, fake_render: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    device = make_device(tmp_path, ("old.jpg",))
+    run = tmp_path / "outputs" / "photo"
+    run.mkdir(parents=True)
+    (run / "photo_quilt_qs8x6a0.75.jpg").write_bytes(b"q")
+
+    portrait_main(["--device", str(device), str(tmp_path / "outputs")])
+
+    assert fake_render == ["photo_quilt_qs8x6a0.75.jpg"]
+    assert playlist_names(device) == ["photo_quilt_qs8x6a0.75.jpg", "old.jpg"]
+    assert "2 item(s)" in capsys.readouterr().out
+    portrait_main(["--device", str(device), "--remove", "old.jpg"])
+    assert playlist_names(device) == ["photo_quilt_qs8x6a0.75.jpg"]

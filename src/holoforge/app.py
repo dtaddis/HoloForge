@@ -39,6 +39,51 @@ def portrait_status() -> str:
     return f"Looking Glass Portrait found at **{device}**."
 
 
+def playlist_summary() -> str:
+    from .portrait import find_portrait_drive, playlist_names
+
+    device = find_portrait_drive()
+    if device is None:
+        return "No Looking Glass Portrait connected."
+    names = playlist_names(device)
+    lines = [f"**Playlist on {device}** ({len(names)} items):"]
+    lines += [f"{index}. {name}" for index, name in enumerate(names, 1)]
+    return "\n".join(lines)
+
+
+def copy_to_portrait(files: list[str] | None, replace_all: bool, rerender: bool) -> str:
+    """Copy uploaded quilts or recordings to the connected Portrait's playlist."""
+    from .portrait import (
+        Calibration,
+        find_holograms,
+        find_portrait_drive,
+        prepare_holograms,
+        push_recordings,
+        replace_playlist,
+    )
+
+    if not files:
+        raise gr.Error("Choose quilts (*_qs8x6a0.75.jpg) or Portrait recordings first.")
+    device = find_portrait_drive()
+    if device is None:
+        raise gr.Error("No Looking Glass Portrait found. Connect it by USB-C and try again.")
+    try:
+        holograms = find_holograms(files)
+        calibration = Calibration.from_file(device / "LKG_calibration" / "visual.json")
+        entries = prepare_holograms(holograms, calibration, rerender=rerender, report=print)
+        if replace_all:
+            replace_playlist(device, entries)
+        else:
+            push_recordings(device, entries)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise gr.Error(str(exc)) from exc
+    done = (
+        f"Copied {len(entries)} item(s). Eject the drive and power the Portrait from USB-C "
+        "alone to play them."
+    )
+    return done + "\n\n" + playlist_summary()
+
+
 def convert_orbit(
     image_path: str,
     preset_name: str,
@@ -231,6 +276,35 @@ def build_ui(output_dir: Path = Path("outputs")) -> gr.Blocks:
                 quilt = gr.File(label="Quilt")
                 recording = gr.File(label="Portrait recording (__lkgrec.mp4)")
                 metadata = gr.File(label="Conversion settings")
+
+        with gr.Accordion("Copy existing holograms to the Portrait", open=False):
+            gr.Markdown(
+                "Add quilts (named like `photo_quilt_qs8x6a0.75.jpg`) or Portrait recordings "
+                "(`*__lkgrec.mp4`) to the connected Portrait's playlist, without Looking Glass "
+                "Studio or Bridge. Quilts are interlaced for this Portrait first."
+            )
+            holograms = gr.File(
+                file_count="multiple",
+                file_types=[".jpg", ".jpeg", ".png", ".webp", ".mp4"],
+                label="Quilts or recordings",
+            )
+            with gr.Row():
+                replace_all = gr.Checkbox(
+                    value=False,
+                    label="Replace the whole playlist",
+                    info="Play only these, in this order, and delete every other recording",
+                )
+                rerender = gr.Checkbox(
+                    value=False,
+                    label="Interlace quilts again",
+                    info="Even if a recording of them exists",
+                )
+            with gr.Row():
+                send = gr.Button("Copy to the Portrait", variant="primary")
+                refresh = gr.Button("Show playlist")
+            playlist = gr.Markdown()
+        send.click(copy_to_portrait, inputs=[holograms, replace_all, rerender], outputs=playlist)
+        refresh.click(playlist_summary, outputs=playlist)
 
         run.click(
             convert,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import re
+import shutil
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -222,62 +222,98 @@ def main() -> None:
     run_orbit(args, images)
 
 
-QUILT_PATTERN = re.compile(r"qs(\d+)x(\d+)a(\d+(?:\.\d+)?)", re.IGNORECASE)
-
-
-def portrait_main() -> None:
-    """holoforge-portrait: interlace existing quilts and copy them to a Portrait."""
+def portrait_main(argv: list[str] | None = None) -> None:
+    """holoforge-portrait: copy holograms to a Portrait and manage its standalone playlist."""
     from .portrait import (
         Calibration,
+        find_holograms,
         find_portrait_drive,
-        prepare_recording,
+        playlist_names,
+        prepare_holograms,
         push_recordings,
+        recording_name,
+        remove_from_playlist,
         replace_playlist,
     )
 
     parser = argparse.ArgumentParser(
         prog="holoforge-portrait",
-        description="Interlace quilts (named *_qs<cols>x<rows>a<aspect>.*) for a Looking Glass "
-        "Portrait and add them to its standalone playlist.",
+        description="Copy holograms to a Looking Glass Portrait and add them to its standalone "
+        "playlist, without Looking Glass Studio or Bridge. Give quilts (named "
+        "*_qs<cols>x<rows>a<aspect>.*), Portrait recordings (*__lkgrec.mp4) or folders of "
+        "either, such as a results folder. Quilts are interlaced for this Portrait unless a "
+        "recording of them is already up to date.",
     )
-    parser.add_argument("quilts", type=Path, nargs="+")
+    parser.add_argument("items", type=Path, nargs="*", help="Quilts, recordings or folders")
     parser.add_argument("--device", type=Path, help="Portrait drive (default: auto-detect)")
     parser.add_argument("--output", type=Path, help="Keep recordings here (default: beside quilt)")
     parser.add_argument("--append", action="store_true", help="Add to the end of the playlist")
     parser.add_argument("--no-push", action="store_true", help="Only render the recordings")
     parser.add_argument(
+        "--rerender", action="store_true", help="Interlace quilts again even if a recording exists"
+    )
+    parser.add_argument(
         "--replace",
         action="store_true",
-        help="Make the Portrait play only these quilts, in this order, and delete every other "
+        help="Make the Portrait play only these items, in this order, and delete every other "
         "*__lkgrec.mp4 recording on it",
     )
-    args = parser.parse_args()
+    parser.add_argument("--list", action="store_true", help="Show the Portrait's playlist")
+    parser.add_argument(
+        "--remove",
+        nargs="+",
+        metavar="NAME",
+        help="Take these items (names as --list shows them) off the Portrait and delete them",
+    )
+    args = parser.parse_args(argv)
     if args.replace and (args.append or args.no_push):
         sys.exit("--replace cannot be combined with --append or --no-push")
+    if not (args.items or args.list or args.remove):
+        parser.error("give quilts, recordings or folders to copy, or --list or --remove")
 
     device = args.device or find_portrait_drive()
     if device is None:
         sys.exit("No Looking Glass Portrait drive found; connect it or pass --device")
-    calibration = Calibration.from_file(Path(device) / "LKG_calibration" / "visual.json")
-    entries = []
-    for quilt in args.quilts:
-        match = QUILT_PATTERN.search(quilt.name)
-        if not match:
-            sys.exit(f"{quilt.name}: name must contain qs<cols>x<rows>a<aspect>")
-        columns, rows, aspect = int(match[1]), int(match[2]), float(match[3])
-        recording, _ = prepare_recording(
-            quilt, columns, rows, aspect, calibration, args.output or quilt.parent
-        )
-        print(f"Rendered {recording}")
-        entries.append((quilt.name, recording))
-    if args.replace:
-        removed = replace_playlist(Path(device), entries)
-        print(f"Playlist on {device} now has exactly {len(entries)} item(s)")
+    device = Path(device)
+
+    if args.remove:
+        removed = remove_from_playlist(device, args.remove)
         for name in removed:
-            print(f"  removed {name}")
-    elif not args.no_push:
-        push_recordings(Path(device), entries, first=not args.append)
-        print(f"Added {len(entries)} item(s) to the playlist on {device}")
+            print(f"Removed {name}")
+        missing = set(args.remove) - set(removed) - {recording_name(n) for n in removed}
+        for name in sorted(missing):
+            print(f"Not on the Portrait: {name}")
+
+    if args.items:
+        try:
+            holograms = find_holograms(args.items)
+        except (FileNotFoundError, ValueError) as exc:
+            sys.exit(str(exc))
+        if not holograms:
+            sys.exit("No quilts or Portrait recordings found")
+        calibration = Calibration.from_file(device / "LKG_calibration" / "visual.json")
+        entries = prepare_holograms(
+            holograms, calibration, rerender=args.rerender, output_dir=args.output
+        )
+        if args.replace:
+            removed = replace_playlist(device, entries)
+            print(f"Playlist on {device} now has exactly {len(entries)} item(s)")
+            for name in removed:
+                print(f"  removed {name}")
+        elif not args.no_push:
+            push_recordings(device, entries, first=not args.append)
+            print(f"Added {len(entries)} item(s) to the playlist on {device}")
+
+    if args.list or (args.items and not args.no_push):
+        names = playlist_names(device)
+        print(f"Playlist on {device} ({len(names)} item(s)):")
+        for index, name in enumerate(names, 1):
+            flag = "" if (device / recording_name(name)).exists() else "  (recording missing)"
+            print(f"  {index:3}. {name}{flag}")
+        free = shutil.disk_usage(device).free
+        print(f"{free / 1e9:.1f} GB free")
+    if args.items and not args.no_push:
+        print("To play them, eject the drive and power the Portrait from USB-C alone.")
 
 
 if __name__ == "__main__":

@@ -194,7 +194,19 @@ Looking Glass Studio is not needed.
 ```powershell
 uv run holoforge-portrait "outputs\photo\photo_quilt_qs8x6a0.75.jpg"   # any existing quilt
 uv run holoforge-portrait (Get-ChildItem outputs\*\*_qs8x6a0.75.jpg) --replace   # only these
+uv run holoforge-portrait outputs                                        # a whole results folder
+uv run holoforge-portrait --list                                         # what's on the Portrait
+uv run holoforge-portrait --remove photo_quilt_qs8x6a0.75.jpg            # take one off
 ```
+
+`holoforge-portrait` (or `holoforge.bat portrait`) copies holograms to the Portrait without
+Looking Glass Studio or Bridge. Give it quilts, ready-made `*__lkgrec.mp4` recordings (Studio's
+or HoloForge's) or folders of either, searched recursively. Quilts are interlaced for the
+connected Portrait unless an up-to-date recording of them is already beside them
+(`--rerender` forces it). Recordings already on the Portrait are not copied again, and each
+copy is written under a temporary name and checked byte for byte before it takes its real
+name, so an interrupted copy never leaves a broken item in the playlist. In the web app, the
+**Copy existing holograms to the Portrait** panel does the same for uploaded files.
 
 New items go to the front of the playlist and existing ones are kept; `--replace` instead
 makes the Portrait play only the given quilts, in order, and deletes every other recording on

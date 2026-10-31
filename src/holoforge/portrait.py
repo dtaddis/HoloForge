@@ -14,14 +14,17 @@ subpixelSize).
 
 from __future__ import annotations
 
+import filecmp
 import json
 import math
 import os
+import re
 import shutil
 import string
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import cv2
@@ -31,6 +34,9 @@ from PIL import Image
 STILL_FPS = 12
 STILL_SECONDS = 10
 RECORDING_SUFFIX = "__lkgrec.mp4"
+# Quilt file names carry their layout, e.g. photo_quilt_qs8x6a0.75.jpg.
+QUILT_PATTERN = re.compile(r"qs(\d+)x(\d+)a(\d+(?:\.\d+)?)", re.IGNORECASE)
+QUILT_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 @dataclass(frozen=True)
@@ -224,6 +230,30 @@ def _backup_once(path: Path) -> None:
         shutil.copy2(path, backup)
 
 
+def _same_file(source: Path, target: Path) -> bool:
+    return (
+        target.exists()
+        and target.stat().st_size == source.stat().st_size
+        and filecmp.cmp(source, target, shallow=False)
+    )
+
+
+def copy_verified(source: Path, target: Path) -> None:
+    """Copy to a temporary name, flush it to the device and check it before it takes the name.
+
+    A pulled cable or an ejected drive then never leaves a half-written recording for the
+    Portrait to try to play.
+    """
+    partial = target.with_name(target.name + ".partial")
+    shutil.copyfile(source, partial)
+    with open(partial, "rb+") as handle:
+        os.fsync(handle.fileno())
+    if not filecmp.cmp(source, partial, shallow=False):
+        partial.unlink()
+        raise OSError(f"{target.name} did not copy intact to the Portrait; try again")
+    os.replace(partial, target)
+
+
 def push_recordings(
     device: Path, entries: list[tuple[str, Path]], *, first: bool = True, copy: bool = True
 ) -> None:
@@ -232,16 +262,22 @@ def push_recordings(
     New entries go to the front of the playlist (or the end with first=False). An entry that
     is already listed is moved rather than duplicated; other items are never removed. The
     original playlist files are backed up once. copy=False only rewrites the playlists.
+    Recordings already on the device byte for byte are not copied again.
     """
     if copy:
-        needed = sum(rec.stat().st_size for _, rec in entries)
+        pending = [
+            (recording, device / recording_name(quilt_name))
+            for quilt_name, recording in entries
+            if not _same_file(recording, device / recording_name(quilt_name))
+        ]
+        needed = sum(recording.stat().st_size for recording, _ in pending)
         free = shutil.disk_usage(device).free
         if needed > free:
             raise OSError(
                 f"Portrait storage has {free / 1e6:.0f} MB free; need {needed / 1e6:.0f} MB"
             )
-        for quilt_name, recording in entries:
-            shutil.copyfile(recording, device / recording_name(quilt_name))
+        for recording, target in pending:
+            copy_verified(recording, target)
 
     names = [quilt_name for quilt_name, _ in entries]
     json_path = device / "playlist.json"
@@ -306,3 +342,159 @@ def prepare_recording(
     lenticular.save(preview, compress_level=1)
     recording = encode_still(lenticular, output_dir / recording_name(quilt_path.name))
     return recording, preview
+
+
+@dataclass
+class Hologram:
+    """One playlist item: its quilt, a ready-made recording, or both."""
+
+    name: str  # the quilt's file name, which is what the playlists list
+    quilt: Path | None = None
+    recording: Path | None = None
+
+
+def quilt_layout(name: str) -> tuple[int, int, float]:
+    match = QUILT_PATTERN.search(name)
+    if not match:
+        raise ValueError(f"{name}: a quilt's name must contain qs<columns>x<rows>a<aspect>")
+    return int(match[1]), int(match[2]), float(match[3])
+
+
+def _is_quilt(path: Path) -> bool:
+    return (
+        path.suffix.lower() in QUILT_SUFFIXES
+        and QUILT_PATTERN.search(path.name) is not None
+        and not path.stem.endswith("_lenticular")  # prepare_recording's preview frame
+    )
+
+
+def find_holograms(paths: Iterable[str | Path]) -> list[Hologram]:
+    """Quilts and Portrait recordings from files and folders (searched recursively), in order.
+
+    A quilt and a recording of the same name become one item, wherever each was found; a
+    recording saved beside a quilt is picked up even when only the quilt was named.
+    """
+    found: list[Path] = []
+    for path in map(Path, paths):
+        if path.is_dir():
+            found += sorted(
+                p for p in path.rglob("*")
+                if p.is_file() and (_is_quilt(p) or p.name.endswith(RECORDING_SUFFIX))
+            )  # fmt: skip
+        elif path.is_file():
+            found.append(path)
+        else:
+            raise FileNotFoundError(path)
+    items: dict[str, Hologram] = {}
+    for path in found:
+        if path.name.endswith(RECORDING_SUFFIX):
+            item = items.setdefault(path.name.removesuffix(RECORDING_SUFFIX), Hologram(""))
+            item.recording = item.recording or path
+        else:
+            quilt_layout(path.name)  # reject anything that is not a quilt now, not mid-copy
+            item = items.setdefault(path.name, Hologram(""))
+            item.quilt = item.quilt or path
+            beside = path.parent / recording_name(path.name)
+            if item.recording is None and beside.exists():
+                item.recording = beside
+    for name, item in items.items():
+        item.name = name
+    return list(items.values())
+
+
+def _rendered_for(recording: Path, quilt: Path, calibration: Calibration) -> bool:
+    """Whether an existing recording is newer than its quilt and not made for another Portrait.
+
+    HoloForge notes the calibration it rendered with in conversion.json; a recording with no
+    such note is trusted.
+    """
+    if recording.stat().st_mtime < quilt.stat().st_mtime:
+        return False
+    notes = recording.parent / "conversion.json"
+    try:
+        meta = json.loads(notes.read_text(encoding="utf-8"))
+        if Path(meta.get("recording") or "").resolve() != recording.resolve():
+            return True
+        used = (meta.get("calibration") or {}).get("serial")
+    except (OSError, ValueError, AttributeError):
+        return True
+    return not used or not calibration.serial or used == calibration.serial
+
+
+def _note_calibration(recording: Path, calibration: Calibration) -> None:
+    notes = recording.parent / "conversion.json"
+    try:
+        meta = json.loads(notes.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(meta, dict):
+        meta["recording"] = str(recording.resolve())
+        meta["calibration"] = asdict(calibration)
+        notes.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+def prepare_holograms(
+    holograms: list[Hologram],
+    calibration: Calibration,
+    *,
+    rerender: bool = False,
+    output_dir: str | Path | None = None,
+    report: Callable[[str], None] = print,
+) -> list[tuple[str, Path]]:
+    """(quilt name, recording) pairs for push_recordings, rendering only what needs it.
+
+    A ready recording is used as it is unless rerender is set (and its quilt is at hand) or
+    it is older than its quilt or was rendered for a different Portrait.
+    """
+    entries = []
+    for item in holograms:
+        recording = item.recording
+        if item.quilt is not None and (
+            rerender or recording is None or not _rendered_for(recording, item.quilt, calibration)
+        ):
+            columns, rows, aspect = quilt_layout(item.name)
+            recording, _ = prepare_recording(
+                item.quilt, columns, rows, aspect, calibration, output_dir or item.quilt.parent
+            )
+            _note_calibration(recording, calibration)
+            report(f"Rendered {recording}")
+        assert recording is not None  # find_holograms gives each item a quilt or a recording
+        entries.append((item.name, recording))
+    return entries
+
+
+def playlist_names(device: Path) -> list[str]:
+    """The quilt names on the device's playlist, in playing order."""
+    path = device / "playlist.json"
+    if not path.exists():
+        return []
+    return [item["filename"] for item in json.loads(path.read_text(encoding="utf-8"))]
+
+
+def remove_from_playlist(device: Path, names: Iterable[str]) -> list[str]:
+    """Take items (quilt or recording file names) off both playlists and delete their recordings.
+
+    Returns the quilt names removed; names not on the device are ignored.
+    """
+    wanted = {n.removesuffix(RECORDING_SUFFIX) for n in names}
+    listed = playlist_names(device)
+    on_disk = {p.name.removesuffix(RECORDING_SUFFIX) for p in device.glob(f"*{RECORDING_SUFFIX}")}
+    removed = [n for n in listed if n in wanted] + sorted((wanted & on_disk) - set(listed))
+    if not removed:
+        return []
+    json_path = device / "playlist.json"
+    m3u_path = device / "playlist.m3u"
+    _backup_once(json_path)
+    _backup_once(m3u_path)
+    if json_path.exists():
+        playlist = json.loads(json_path.read_text(encoding="utf-8"))
+        playlist = [item for item in playlist if item.get("filename") not in wanted]
+        json_path.write_text(json.dumps(playlist, indent=4), encoding="utf-8", newline="\r\n")
+    if m3u_path.exists():
+        drop = {recording_name(n) for n in wanted}
+        lines = m3u_path.read_text(encoding="utf-8").splitlines()
+        lines = [line for line in lines if line.strip() and line.strip() not in drop]
+        m3u_path.write_text("".join(f"{line}\r\n" for line in lines), encoding="utf-8", newline="")
+    for name in removed:
+        (device / recording_name(name)).unlink(missing_ok=True)
+    return removed
